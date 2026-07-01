@@ -8,7 +8,7 @@ import time
 from fpdf import FPDF
 
 # --- 1. CONFIGURAÇÃO SEGURA DO SISTEMA ---
-st.set_page_config(page_title="Gascat - Inteligência Metrológica", layout="wide")
+st.set_page_config(page_title="Gascat - Inteligência Metrológica Universal", layout="wide")
 
 try:
     CHAVE_API_GEMINI = st.secrets["GEMINI_API_KEY"]
@@ -28,30 +28,39 @@ def extrair_texto_pdf(arquivo_pdf):
     return texto
 
 def estruturar_dados_com_ia(texto_bruto):
-    """Aciona o LLM com mecanismo de retry e blindagem extratora de JSON."""
-    # Utilizando o 1.5-flash (O modelo mais estável e com maior cota gratuita do Google)
+    """
+    Aciona o LLM com mapeamento semântico universal para suportar qualquer instrumento
+    (Paquímetros, Micrômetros, Durômetros, Manômetros, Subitos, Relógios, Pinos Padrão, etc).
+    """
     modelo = genai.GenerativeModel('gemini-1.5-flash')
     
     prompt = f"""
     Você é um Engenheiro Metrologista Sênior operando em MODO DESEMPENHO MÁXIMO.
-    Analise o texto bruto de um certificado de calibração na íntegra e extraia os dados numéricos de calibração com precisão absoluta.
+    Sua missão é ler o texto bruto de um certificado de calibração e extrair a TABELA FINAL DE RESULTADOS.
     
-    REGRAS OPERACIONAIS (OBRIGATÓRIO):
-    1. Leia TODO o documento. Procure por todos os pontos de medição avaliados.
-    2. UNIDADES MISTAS: Se o Padrão estiver em 'mm' e o Desvio/Erro/Incerteza estiver em 'µm', CONVERTA os valores em µm para mm (dividindo por 1000).
-    3. BLOCOS PADRÃO/PESOS: Não possuem "Valor Indicado". Possuem "Valor Nominal" (vrm) e "Desvio Central" (erro). Trate "Desvio Central" como Erro.
+    O certificado pode pertencer a QUALQUER UM destes instrumentos: Micrômetros, Paquímetros, Durômetros, Manômetros, Subitos, Relógios Apalpadores/Comparadores, Pinos Padrão, Termômetros, etc.
+    
+    REGRAS DE OURO DA EXTRAÇÃO:
+    1. IGNORE tabelas de "Condições Ambientais" (temperatura e umidade da sala). Busque apenas os resultados da calibração do instrumento.
+    2. MAPEAMENTO SEMÂNTICO UNIVERSAL:
+       - "vrm" (Padrão): Valor Nominal, Valor de Referência, Padrão, Dureza do Padrão, Dimensão Nominal, Pressão de Referência.
+       - "vim" (Indicado): Valor Indicado, Valor Medido, Média das Leituras, Valor Encontrado. (Se o certificado fornecer apenas o VRM e o Erro/Desvio, calcule: VIM = VRM + Erro).
+       - "erro" (Erro): Erro, Erro de Medição, Desvio, Desvio Central, Tendência.
+       - "incerteza": Incerteza Expandida, Incerteza, U.
+       - "limite": Erro Máximo Permissível, Tolerância, Limite de Erro. SE NÃO EXISTIR NO DOCUMENTO, USE 0.0.
+    3. CONVERSÃO DE UNIDADES (CRÍTICO PARA DIMENSIONAL): Se o Padrão (VRM) estiver em milímetros ('mm') e o Erro/Incerteza estiver em micrômetros ('µm'), VOCÊ DEVE CONVERTER µm para mm (dividindo por 1000). Para outras grandezas (Dureza HRC/HLD, Pressão bar/psi/kgf, etc), MANTENHA OS VALORES COMO ESTÃO extraídos do certificado.
     
     FORMATO DE SAÍDA ESTRITO (JSON):
-    Retorne APENAS um objeto JSON válido, sem comentários.
+    Retorne APENAS um objeto JSON válido, sem marcações Markdown, sem texto antes ou depois.
     {{
       "resumo": {{
-        "instrumento": "Nome do instrumento",
-        "laboratorio": "Nome do laboratório",
+        "instrumento": "Nome exato do instrumento (ex: Durômetro, Subito, Manômetro)",
+        "laboratorio": "Nome do laboratório emissor",
         "identificacao": "Número do certificado ou TAG",
-        "analise_ia": "Resumo de 2 a 3 linhas sobre a análise realizada e se converteu unidades."
+        "analise_ia": "Breve resumo técnico do que foi extraído, tipo de grandeza e se houve conversão de unidades."
       }},
       "pontos": [
-        {{"vrm": 1.0, "vim": 1.00007, "erro": 0.00007, "incerteza": 0.00007, "limite": 0.0}}
+        {{"vrm": 10.0, "vim": 10.01, "erro": 0.01, "incerteza": 0.005, "limite": 0.0}}
       ]
     }}
     
@@ -65,20 +74,27 @@ def estruturar_dados_com_ia(texto_bruto):
             resposta = modelo.generate_content(prompt)
             texto_bruto_ia = resposta.text
             
-            # --- BLINDAGEM DE JSON (O Pulo do Gato) ---
-            # Encontra onde o JSON começa '{' e onde termina '}' ignorando lixo Markdown
+            # --- BLINDAGEM DE JSON EXTREMA ---
             inicio = texto_bruto_ia.find('{')
             fim = texto_bruto_ia.rfind('}')
             
             if inicio != -1 and fim != -1:
                 texto_limpo = texto_bruto_ia[inicio:fim+1]
-                return json.loads(texto_limpo)
+                dados = json.loads(texto_limpo)
+                
+                # Filtro Anti-Alucinação: Evita que a IA devolva o exemplo do prompt
+                if len(dados.get("pontos", [])) > 0:
+                    primeiro_ponto = dados["pontos"][0]
+                    if primeiro_ponto.get("vrm") == 10.0 and primeiro_ponto.get("vim") == 10.01 and primeiro_ponto.get("erro") == 0.01:
+                        raise ValueError("O LLM retornou o exemplo literal em vez de processar o PDF.")
+                        
+                return dados
             else:
-                raise ValueError("Nenhum JSON detectado na resposta.")
+                raise ValueError("Nenhum formato JSON estruturado foi detectado na resposta do LLM.")
                 
         except Exception as e:
             if tentativa < max_tentativas - 1:
-                time.sleep(5) # Espera 5 segundos antes de tentar novamente para não estourar a cota
+                time.sleep(5) 
             else:
                 st.error(f"Erro persistente na extração via IA após múltiplas tentativas. Detalhe: {e}")
                 return None
@@ -144,7 +160,7 @@ def gerar_relatorio_pdf(df_resultados, nome_original, resumo_ia):
     # Bloco de Resumo da Inteligência Artificial
     pdf.ln(5)
     pdf.set_font("helvetica", "B", 10)
-    pdf.cell(0, 5, "Síntese da Extração (Inteligência Artificial):", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 5, "Síntese da Extração (Inteligência Artificial Universal):", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("helvetica", "I", 9)
     texto_resumo = f"Instrumento: {resumo_ia.get('instrumento', 'N/D')} | OS/TAG: {resumo_ia.get('identificacao', 'N/D')} | Laboratório: {resumo_ia.get('laboratorio', 'N/D')}\nAnálise: {resumo_ia.get('analise_ia', 'Sem observações adicionais.')}"
     pdf.multi_cell(0, 5, texto_resumo)
@@ -200,24 +216,24 @@ def gerar_relatorio_pdf(df_resultados, nome_original, resumo_ia):
 
 # --- 5. INTERFACE DO USUÁRIO (STREAMLIT) ---
 st.title("🔬 Motor Metrológico Universal Gascat")
-st.markdown("Processamento avançado de certificados via Inteligência Artificial.")
+st.markdown("Processamento corporativo de calibração via IA para Dimensional, Pressão, Temperatura, Dureza e afins.")
 
 arquivo_upload = st.file_uploader("Insira o Certificado Analítico (PDF)", type=["pdf"])
 
 if arquivo_upload:
-    with st.spinner("Analisando páginas do documento e estruturando dados..."):
+    with st.spinner("Analisando tipo de grandeza, mapeando variáveis e estruturando matriz de dados..."):
         texto_extraido = extrair_texto_pdf(arquivo_upload)
         dados_json = estruturar_dados_com_ia(texto_extraido)
         
         if dados_json and "pontos" in dados_json:
             resumo = dados_json.get("resumo", {})
             st.markdown("---")
-            st.markdown("### 🧠 Diagnóstico da Inteligência Artificial")
+            st.markdown("### 🧠 Diagnóstico de Extração (Engenharia Simultânea)")
             col_a, col_b, col_c = st.columns(3)
-            col_a.metric("Instrumento", resumo.get("instrumento", "N/A"))
-            col_b.metric("OS/TAG", resumo.get("identificacao", "N/A"))
-            col_c.metric("Laboratório", resumo.get("laboratorio", "N/A"))
-            st.info(f"**Parecer da Leitura:** {resumo.get('analise_ia', 'Sem observações adicionais.')}")
+            col_a.metric("Instrumento Identificado", resumo.get("instrumento", "N/A"))
+            col_b.metric("OS/TAG/Série", resumo.get("identificacao", "N/A"))
+            col_c.metric("Laboratório Emissor", resumo.get("laboratorio", "N/A"))
+            st.info(f"**Parecer Cognitivo da IA:** {resumo.get('analise_ia', 'Sem observações adicionais.')}")
             
             # Processamento Matemático
             df = avaliar_metrologia(dados_json["pontos"])
@@ -226,7 +242,7 @@ if arquivo_upload:
             tem_ressalva = "RESSALVA" in df['Decisão'].values
             falta_limite = "FALTA LIMITE" in df['Decisão'].values
             
-            st.markdown("### 📊 Laudo da Avaliação Metrológica")
+            st.markdown("### 📊 Laudo da Avaliação Metrológica (Tolerância & Falsa Aceitação)")
             if tem_reprovado: 
                 st.error("🚨 **LAUDO FINAL: REPROVADO**")
             elif falta_limite:
