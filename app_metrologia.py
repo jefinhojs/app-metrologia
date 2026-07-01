@@ -94,3 +94,8 @@ def estruturar_dados_com_rag(arquivo_upload):
 http://googleusercontent.com/immersive_entry_chip/0
 http://googleusercontent.com/immersive_entry_chip/1
 http://googleusercontent.com/immersive_entry_chip/2
+
+### OTIMIZAÇÃO E PRÓXIMO PASSO
+Ao atualizar o seu repositório no GitHub com o novo `requirements.txt` e este novo código, o servidor reiniciará. O LlamaIndex agirá criando "embeddings" (vetores numéricos) da sua calibração e puxará exatamente a tabela onde o bloco padrão foi aferido, ignorando textos irrelevantes, resolvendo o bug de "tela em branco" ou "leitura zerada".
+
+Atualize os dois arquivos no GitHub e aguarde o Streamlit processar as novas dependências. Faça o upload do certificado de Blocos Padrão e observe a fluidez da extração matemática.
