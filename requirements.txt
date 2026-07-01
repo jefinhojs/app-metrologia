@@ -1,8 +1,6 @@
 streamlit
 pandas
+pdfplumber
 fpdf2
-llama-index-core
-llama-index-readers-file
-llama-index-llms-gemini
-llama-index-embeddings-gemini
-pypdf
+google-genai
+pydantic
