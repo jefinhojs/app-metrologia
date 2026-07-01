@@ -72,4 +72,4 @@ def processar_ia_estruturada(texto_bruto):
             
             # Sanitização extra para garantir que não haja sujeira no JSON retornado
             texto_limpo = resposta.text.strip()
-            if texto_limpo.startswith("
+            if texto_limpo.startswith()
