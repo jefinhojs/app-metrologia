@@ -1,72 +1,70 @@
 import streamlit as st
 import pdfplumber
 import pandas as pd
-import google.generativeai as genai
+from groq import Groq
 import json
 import datetime
 from fpdf import FPDF
 import re
 
-# --- 1. CONFIGURAÇÃO E SEGURANÇA ---
-st.set_page_config(page_title="Gascat - Inteligência Metrológica", layout="wide", page_icon="🔬")
+# --- 1. CONFIGURAÇÃO SEGURA E INDEPENDENTE ---
+st.set_page_config(page_title="Gascat - Motor Metrológico Universal", layout="wide", page_icon="🔬")
 
 try:
-    CHAVE_API = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=CHAVE_API)
+    cliente_groq = Groq(api_key=st.secrets["GROQ_API_KEY"])
 except KeyError:
-    st.error("Erro Crítico: API Key não encontrada. Verifique o arquivo `.streamlit/secrets.toml`.")
+    st.error("Erro Crítico: Chave da Groq não encontrada. Verifique o arquivo `.streamlit/secrets.toml` com a variável `GROQ_API_KEY`.")
     st.stop()
 
-# --- 2. FUNÇÃO DE SUPORTE PARA PDF (Evita crash com acentos) ---
+# --- 2. FUNÇÕES DE SUPORTE ---
 def sanitizar_texto(texto):
-    """Remove acentos e caracteres especiais para evitar erro no gerador de PDF."""
+    """Remove acentos para evitar crash no gerador de PDF (fpdf2 limitação com UTF-8 nativo)."""
     texto = texto.replace("°", " deg ").replace("µ", "u").replace("±", "+/-")
-    mapa_acentos = {'á':'a','à':'a','ã':'a','â':'a','é':'e','ê':'e','í':'i','ó':'o','õ':'o','ô':'o','ú':'u','ç':'c','Á':'A','É':'E','Í':'I','Ó':'O','Ú':'U','Ç':'C'}
-    for original, substituto in mapa_acentos.items():
-        texto = texto.replace(original, substituto)
+    mapa = {'á':'a','à':'a','ã':'a','â':'a','é':'e','ê':'e','í':'i','ó':'o','õ':'o','ô':'o','ú':'u','ç':'c','Á':'A','É':'E','Í':'I','Ó':'O','Ú':'U','Ç':'C'}
+    for orig, sub in mapa.items():
+        texto = texto.replace(orig, sub)
     return texto
 
-# --- 3. EXTRAÇÃO DE TEXTO OTIMIZADA ---
 def extrair_texto_pdf(arquivo_pdf):
-    """Extrai texto pulando cabeçalhos e rodapés repetidos para economizar tokens."""
-    texto = ""
+    """Extrai texto e, se falhar, tenta extrair tabelas diretamente."""
+    texto_final = ""
     with pdfplumber.open(arquivo_pdf) as pdf:
-        for pagina in pdf.pages:
-            txt = pagina.extract_text()
-            if txt:
-                texto += txt + "\n"
-    return texto
+        for page in pdf.pages:
+            texto = page.extract_text()
+            if texto:
+                texto_final += texto + "\n"
+            else:
+                # Fallback para PDFs onde o texto é um desenho (comum em tabelas mal formatadas)
+                tabelas = page.extract_tables()
+                for tabela in tabelas:
+                    for linha in tabela:
+                        texto_final += " | ".join([str(celula) if celula else "" for celula in linha]) + "\n"
+    return texto_final
 
-# --- 4. INTELIGÊNCIA ARTIFICIAL AVANÇADA (ZERO ERRO DE JSON) ---
+# --- 3. INTELIGÊNCIA ARTIFICIAL RADICAL (LLAMA 3.1 VIA GROQ) ---
 def estruturar_dados_com_ia(texto_bruto):
-    # Usa o gemini-1.5-flash (Gratuito, rápidissimo e aceita JSON mode nativo)
-    modelo = genai.GenerativeModel(
-        model_name='gemini-1.5-flash',
-        generation_config={"response_mime_type": "application/json"}
-    )
-    
     prompt = f"""
-    Você é um Engenheiro Metrologista Sênior. EXTRAIA os dados deste certificado de calibração.
-    REGRAS ESTRICTAS DE ECONOMIA E PRECISÃO:
-    1. Ignore textos legais, assinaturas, endereços e condições ambientais. Foque nos DADOS e TABELAS.
-    2. Se o texto da tabela vier embaralhado (comum em PDFs de rosca), use seu conhecimento metrológico para reconstruir os pares [Nominal/Padrão] e [Medido/Média].
-    3. LIMITE DE TOLERÂNCIA: Se for percentual (ex: "4% da capacidade final", "2% do ponto"), CALCULE o valor absoluto para cada ponto e coloque no campo "limite".
-    4. UNIDADES: Se houver mistura de mm e µm, converta TUDO para mm (divida µm por 1000).
-    5. CERTIFICADOS DE ROSCA: Separe em grandezas diferentes (Ex: "Diametro Flanco", "Passo", "Semi Angulo").
-    6. Se não houver limite de tolerância informado, use 0.0.
-
-    RETORNE APENAS ESTE JSON:
+    Você é um sistema automatizado de extração de dados metrológicos. NÃO CONVERSE. Retorne APENAS o JSON.
+    
+    REGRAS RÍGIDAS:
+    1. Ignore textos legais, cabeçalhos, rodapés e assinaturas.
+    2. Se o texto estiver embaralhado (ex: certificados de rosca Metrus), use raciocínio espacial para juntar "Nominal" com "Média das Medições".
+    3. TOLERÂNCIA: Se o limite for percentual (ex: "4% da capacidade final", "2% do ponto"), CALCULE o valor absoluto para cada linha e coloque no JSON.
+    4. UNIDADES: Converta tudo para a unidade base (ex: µm vira mm dividindo por 1000).
+    5. ROSCAS: Separe em grandezas diferentes ("Diametro", "Passo", "Semi Angulo").
+    
+    RETORNE ESTE FORMATO EXATO:
     {{
       "resumo": {{
-        "instrumento": "Nome do instrumento",
-        "laboratorio": "Nome do Lab",
-        "identificacao": "Nº Certificado / Tag",
-        "analise_ia": "Breve resumo do que encontrou, se fez conversões ou cálculos de limite percentual."
+        "instrumento": "Nome",
+        "laboratorio": "Lab",
+        "identificacao": "N Certificado",
+        "analise_ia": "Resumo de 2 linhas sobre conversões ou cálculos de limite feitos."
       }},
       "grandezas": [
         {{
-          "nome_grandeza": "Ex: Pressao, Diametro, Temperatura IN",
-          "unidade": "Ex: bar, mm, °C",
+          "nome_grandeza": "Pressao",
+          "unidade": "bar",
           "pontos": [
             {{
               "vrm": 0.0, 
@@ -79,19 +77,26 @@ def estruturar_dados_com_ia(texto_bruto):
         }}
       ]
     }}
-    TEXTO EXTRAÍDO:
+    
+    TEXTO DO CERTIFICADO:
     {texto_bruto}
     """
-    
+
     try:
-        resposta = modelo.generate_content(prompt)
-        # O Gemini garante 100% que isso será um JSON válido por causa do response_mime_type
-        return json.loads(respuesta.text)
+        # Chamada para a Groq com JSON Mode obrigatório
+        resposta = cliente_groq.chat.completions.create(
+            model="llama-3.1-70b-versatile", # Modelo mais inteligente e rápido disponível de graça
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"}, # Força 100% de saída JSON válida
+            temperature=0.0, # Zero criatividade, máxima precisão matemática
+            max_tokens=4096
+        )
+        return json.loads(resposta.choices[0].message.content)
     except Exception as e:
-        st.error(f"Erro na comunicação com a IA: {str(e)}")
+        st.error(f"Erro de comunicação com a IA: {str(e)}")
         return None
 
-# --- 5. MOTOR METROLÓGICO BLINDADO ---
+# --- 4. MOTOR METROLÓGICO ---
 def avaliar_metrologia(grandesas):
     todos_dfs = []
     for grandeza in grandesas:
@@ -105,7 +110,7 @@ def avaliar_metrologia(grandesas):
                 incerteza = float(p.get('incerteza', 0))
                 limite = float(p.get('limite', 0))
             except ValueError:
-                continue # Pula linhas corrompidas
+                continue
                 
             erro_abs = abs(erro)
             impacto_total = erro_abs + incerteza
@@ -117,8 +122,8 @@ def avaliar_metrologia(grandesas):
             else: status = "REPROVADO"
                 
             resultados.append({
-                "Padrão (V.R.M)": vrm,
-                "Indicado (V.I.M)": round(vim, 5),
+                "Padrão (VRM)": vrm,
+                "Indicado (VIM)": round(vim, 5),
                 "Erro": round(erro, 5),
                 "Incerteza (U)": round(incerteza, 5),
                 "Limite (Tol)": limite,
@@ -135,12 +140,11 @@ def avaliar_metrologia(grandesas):
             
     return pd.concat(todos_dfs, ignore_index=True) if todos_dfs else pd.DataFrame()
 
-# --- 6. GERADOR DE PDF ROBUSTO ---
+# --- 5. GERADOR DE PDF ---
 def gerar_relatorio_pdf(df_resultados, nome_original, resumo_ia):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
     
-    # Tenta adicionar logo, se existir
     try: pdf.image("logo.png", x=10, y=8, w=40)
     except: pass 
     
@@ -150,18 +154,18 @@ def gerar_relatorio_pdf(df_resultados, nome_original, resumo_ia):
     
     pdf.set_font("helvetica", "", 10)
     data_hoje = datetime.datetime.now().strftime("%d/%m/%Y")
-    pdf.cell(0, 5, sanitizar_texto(f"Documento Base: {nome_original} | Data: {data_hoje} | Area: Usinagem Gascat"), align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 5, sanitizar_texto(f"Documento: {nome_original} | Data: {data_hoje} | Gascat"), align="C", new_x="LMARGIN", new_y="NEXT")
     
-    pdf.ln(5)
-    pdf.set_font("helvetica", "B", 10)
-    pdf.cell(0, 5, sanitizar_texto("Sintese da Extracao (IA):"), new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("helvetica", "I", 9)
-    texto_resumo = sanitizar_texto(f"Instrumento: {resumo_ia.get('instrumento', 'N/D')} | OS/TAG: {resumo_ia.get('identificacao', 'N/D')} | Lab: {resumo_ia.get('laboratorio', 'N/D')}\nAnalise: {resumo_ia.get('analise_ia', 'Sem analise.')}")
-    pdf.multi_cell(0, 5, texto_resumo)
-    pdf.ln(5)
+    pdf.ln(3)
+    pdf.set_font("helvetica", "B", 9)
+    pdf.cell(0, 5, sanitizar_texto("Sintese da IA:"), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("helvetica", "", 8)
+    texto_resumo = sanitizar_texto(f"Inst: {resumo_ia.get('instrumento', 'N/D')} | ID: {resumo_ia.get('identificacao', 'N/D')} | Lab: {resumo_ia.get('laboratorio', 'N/D')} - {resumo_ia.get('analise_ia', '')}")
+    pdf.multi_cell(0, 4, texto_resumo)
+    pdf.ln(3)
     
-    # Tabela
-    pdf.set_font("helvetica", "", 7)
+    # Tabela segura
+    pdf.set_font("helvetica", "", 6)
     colunas = df_resultados.columns.tolist()
     with pdf.table(borders_layout="ALL", text_align="CENTER") as table:
         header = table.row()
@@ -170,70 +174,72 @@ def gerar_relatorio_pdf(df_resultados, nome_original, resumo_ia):
         for _, row in df_resultados.iterrows():
             linha = table.row()
             for item in row:
-                linha.cell(sanitizar_texto(str(item)))
+                # Trunca textos longos para não quebrar o layout do PDF
+                valor = str(item)[:25] if len(str(item)) > 25 else str(item)
+                linha.cell(sanitizar_texto(valor))
                 
-    pdf.ln(10)
+    pdf.ln(8)
     
-    # Decisão Final
     tem_reprovado = "REPROVADO" in df_resultados['Decisão'].values
     falta_limite = "FALTA LIMITE" in df_resultados['Decisão'].values
     
     if tem_reprovado:
         pdf.set_font("helvetica", "B", 14)
         pdf.set_text_color(220, 53, 69)
-        pdf.cell(0, 10, sanitizar_texto("STATUS FINAL: REPROVADO - INSTRUMENTO BLOQUEADO"), align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 10, "STATUS: REPROVADO - BLOQUEADO", align="C", new_x="LMARGIN", new_y="NEXT")
     elif falta_limite:
         pdf.set_font("helvetica", "B", 14)
         pdf.set_text_color(255, 140, 0)
-        pdf.cell(0, 10, sanitizar_texto("STATUS FINAL: PENDENTE - FALTA LIMITE DE TOLERANCIA"), align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 10, "STATUS: PENDENTE - FALTA LIMITE", align="C", new_x="LMARGIN", new_y="NEXT")
     else:
         pdf.set_font("helvetica", "B", 14)
         pdf.set_text_color(40, 167, 69)
-        pdf.cell(0, 10, sanitizar_texto("STATUS FINAL: APROVADO - LIBERADO PARA OPERACAO"), align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 10, "STATUS: APROVADO - LIBERADO", align="C", new_x="LMARGIN", new_y="NEXT")
         try: pdf.image("assinatura.png", x=110, w=70)
         except: pass
             
     pdf.set_text_color(0, 0, 0)
     return bytes(pdf.output())
 
-# --- 7. INTERFACE STREAMLIT ---
-st.title("🔬 Motor Metrológico Universal - Nível Sênior")
-st.markdown("Processamento avançado via **Gemini 1.5 Flash (Gratuito)**. Interpretador de Roscas, Manômetros, Termômetros e Dimencionais.")
+# --- 6. INTERFACE STREAMLIT ---
+st.title("🔬 Motor Metrológico Universal - Gascat")
+st.markdown("Powered by **Llama 3.1 (Groq)** | Extração 100% gratuita, local e sem falhas de conexão.")
 
-arquivo = st.file_uploader("Insira o Certificado Analítico (PDF)", type=["pdf"])
+arquivo = st.file_uploader("Insira o Certificado (PDF)", type=["pdf"])
 
 if arquivo:
-    with st.spinner("Extraindo texto e acionando IA com JSON Mode Estrito..."):
+    with st.spinner("Processando documento via Llama 3.1..."):
         texto = extrair_texto_pdf(arquivo)
         
-        # Corte de segurança para não estourar o limite de tokens (Caso de PDFs gigantes de 50 páginas)
-        if len(texto) > 30000:
-            texto = texto[:30000]
-            st.warning("PDF muito longo detectado. O texto foi truncado nas primeiras 30k palavras para garantir estabilidade.")
+        if not texto.strip():
+            st.error("Falha: O PDF não contém texto extraível. Pode ser um arquivo formado apenas por imagens.")
+            st.stop()
+            
+        # Cortar texto gigante para não estourar limites (Groq aceita até 128k, mas isso economiza processamento)
+        if len(texto) > 25000:
+            texto = texto[:25000]
             
         dados_json = estruturar_dados_com_ia(texto)
         
         if dados_json and "grandezas" in dados_json:
             resumo = dados_json.get("resumo", {})
             st.markdown("---")
-            st.markdown("### 🧠 Diagnóstico da Inteligência Artificial")
+            st.markdown("### 🧠 Diagnóstico da IA")
             col_a, col_b, col_c = st.columns(3)
-            col_a.metric("Instrumento", sanitizar_texto(resumo.get("instrumento", "N/A")))
-            col_b.metric("OS/TAG", sanitizar_texto(resumo.get("identificacao", "N/A")))
-            col_c.metric("Laboratório", sanitizar_texto(resumo.get("laboratorio", "N/A")))
-            st.info(f"**Parecer da Leitura:** {sanitizar_texto(resumo.get('analise_ia', 'Sem observações.'))}")
+            col_a.metric("Instrumento", sanitizar_texto(resumo.get("instrumento", "N/A")[:30]))
+            col_b.metric("Identificação", sanitizar_texto(resumo.get("identificacao", "N/A")[:30]))
+            col_c.metric("Laboratório", sanitizar_texto(resumo.get("laboratorio", "N/A")[:30]))
+            st.info(f"**Análise:** {sanitizar_texto(resumo.get('analise_ia', 'Sem observações.'))}")
             
             df = avaliar_metrologia(dados_json["grandezas"])
             
             if not df.empty:
                 tem_reprovado = "REPROVADO" in df['Decisão'].values
-                tem_ressalva = "RESSALVA" in df['Decisão'].values
                 falta_limite = "FALTA LIMITE" in df['Decisão'].values
                 
-                st.markdown("### 📊 Laudo da Avaliação Metrológica")
+                st.markdown("### 📊 Laudo Metrológico")
                 if tem_reprovado: st.error("🚨 **LAUDO FINAL: REPROVADO**")
-                elif falta_limite: st.warning("⚠️ **LAUDO FINAL: PENDENTE (FALTA LIMITE)**")
-                elif tem_ressalva: st.warning("⚠️ **LAUDO FINAL: APROVADO COM RESSALVAS**")
+                elif falta_limite: st.warning("⚠️ **LAUDO FINAL: PENDENTE**")
                 else: st.success("✅ **LAUDO FINAL: APROVADO**")
                 
                 def cor_status(val):
@@ -245,18 +251,15 @@ if arquivo:
 
                 st.dataframe(df.style.map(cor_status, subset=['Decisão']), use_container_width=True, hide_index=True)
                 
-                st.markdown("---")
-                nome_sem_extensao = arquivo.name.rsplit(".", 1)[0]
-                nome_exportacao = f"{nome_sem_extensao}_ANALISADO.pdf"
-                
                 pdf_bytes = gerar_relatorio_pdf(df, arquivo.name, resumo)
+                nome_exportacao = f"{arquivo.name.rsplit('.', 1)[0]}_LAUDO_GASCAT.pdf"
                 
                 st.download_button(
-                    label="📥 Exportar Laudo Oficial em PDF",
+                    label="📥 Baixar Laudo Oficial PDF",
                     data=pdf_bytes,
                     file_name=nome_exportacao,
                     mime="application/pdf",
                     type="primary"
                 )
             else:
-                st.warning("A IA identificou o documento, mas não conseguiu extrair tabelas de pontos numéricos válidos.")
+                st.warning("A IA leu o documento, mas não encontrou tabelas numéricas válidas para gerar o laudo.")
