@@ -83,19 +83,19 @@ def estruturar_dados_com_ia(texto_bruto):
     """
 
     try:
-        # Chamada para a Groq com JSON Mode obrigatório
+        # Chamada para a Groq com o modelo Llama 3.3 atualizado
         resposta = cliente_groq.chat.completions.create(
-            model="llama-3.1-70b-versatile", # Modelo mais inteligente e rápido disponível de graça
+            model="llama-3.3-70b-versatile", 
             messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"}, # Força 100% de saída JSON válida
-            temperature=0.0, # Zero criatividade, máxima precisão matemática
+            response_format={"type": "json_object"}, 
+            temperature=0.0, 
             max_tokens=4096
         )
         return json.loads(resposta.choices[0].message.content)
     except Exception as e:
         st.error(f"Erro de comunicação com a IA: {str(e)}")
         return None
-
+        
 # --- 4. MOTOR METROLÓGICO ---
 def avaliar_metrologia(grandesas):
     todos_dfs = []
