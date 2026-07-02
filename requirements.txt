@@ -4,3 +4,4 @@ pdfplumber
 fpdf2
 google-genai
 pydantic
+google.generativeai
