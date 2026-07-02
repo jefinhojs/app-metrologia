@@ -70,8 +70,8 @@ def processar_ia_estruturada(texto_bruto):
             )
             
             texto_limpo = resposta.text.strip()
-            if texto_limpo.startswith("
+            if texto_limpo.startswith(
 http://googleusercontent.com/immersive_entry_chip/0
 http://googleusercontent.com/immersive_entry_chip/1
 http://googleusercontent.com/immersive_entry_chip/2
-")
+)
