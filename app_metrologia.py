@@ -4,14 +4,16 @@ import pandas as pd
 import json
 import datetime
 import time
+import io
 from fpdf import FPDF
+from typing import List
 
-# Importações do NOVO SDK do Google e Validador de Dados Pydantic
+# Importações do SDK do Google e Validador de Dados Pydantic
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
-# --- 1. DEFINIÇÃO ABSOLUTA DA ESTRUTURA DE DADOS (POKA-YOKE) ---
+# --- 1. DEFINIÇÃO DA ESTRUTURA DE DADOS ---
 class PontoCalibracao(BaseModel):
     vrm: float = Field(description="Valor de Referência (Padrão, Ref ou Valor Nominal)")
     vim: float = Field(description="Valor Indicado (Mensurando, UUT ou Valor Lido)")
@@ -20,13 +22,13 @@ class PontoCalibracao(BaseModel):
     limite: float = Field(description="Limite de Erro ou Tolerância. Se não existir expresso na tabela, DEVE ser 0.0")
 
 class RelatorioMetrologico(BaseModel):
-    instrumento: str = Field(description="Nome do instrumento (ex: Durômetro, Manômetro, Bloco Padrão)")
-    laboratorio: str = Field(description="Nome do laboratório emissor (ex: CTM, CEIME, LAFTEC)")
-    identificacao: str = Field(description="Número de série, OS ou TAG do instrumento")
-    analise_ia: str = Field(description="Resumo de como encontrou os dados e se o limite estava ausente.")
-    pontos: list[PontoCalibracao]
+    instrumento: str = Field(description="Nome do instrumento")
+    laboratorio: str = Field(description="Nome do laboratório emissor")
+    identificacao: str = Field(description="Número de série, OS ou TAG")
+    analise_ia: str = Field(description="Resumo da análise")
+    pontos: List[PontoCalibracao]
 
-# --- 2. CONFIGURAÇÃO DO SISTEMA ---
+# --- 2. CONFIGURAÇÃO ---
 st.set_page_config(page_title="Gascat - Qualidade Assegurada", layout="wide")
 
 try:
@@ -36,25 +38,22 @@ except KeyError:
     st.error("Erro Crítico: A API Key do Gemini não foi encontrada no cofre de segredos.")
     st.stop()
 
-# --- 3. EXTRAÇÃO DE ALTA FIDELIDADE (LAYOUT PRESERVADO) ---
+# --- 3. EXTRAÇÃO ---
 def extrair_texto_layout(arquivo_pdf):
     texto = ""
-    with pdfplumber.open(arquivo_pdf) as pdf:
+    # Uso do io.BytesIO garante que o pdfplumber leia o arquivo em memória na nuvem sem falhas
+    with pdfplumber.open(io.BytesIO(arquivo_pdf.getvalue())) as pdf:
         for pagina in pdf.pages:
-            # layout=True mantém o alinhamento das colunas da CTM
             texto += pagina.extract_text(layout=True) + "\n"
     return texto
 
 def processar_ia_estruturada(texto_bruto):
     prompt = """
-    Você é o Engenheiro Chefe de Metrologia. Extraia a tabela de resultados do certificado abaixo.
-    
-    REGRAS DE OURO (Siga rigorosamente):
-    1. LABORATÓRIO CTM / DURÔMETROS: O Valor de Referência (Padrão) costuma vir como 'Ref'. O Valor Indicado (Mensurando) costuma vir como 'UUT'. A unidade geralmente é HRC, HRB, etc. Foque apenas nos números exatos medidos.
-    2. UNIDADES MISTAS: Se o padrão estiver em 'mm' e o erro em 'µm', divida os valores em µm por 1000.
-    3. TOLERÂNCIA CEGA: Se o certificado não declarar expressamente o "Limite de Erro", "Erro Máximo" ou "Tolerância" na mesma tabela dos resultados, defina o campo 'limite' obrigatoriamente como 0.0.
-    
-    TEXTO DO CERTIFICADO:
+    Extraia a tabela de resultados do certificado abaixo.
+    1. LABORATÓRIO CTM / DURÔMETROS: 'Ref' = Valor de Referência. 'UUT' = Valor Indicado. Foque nos números.
+    2. UNIDADES MISTAS: Se padrão em 'mm' e erro em 'µm', divida µm por 1000.
+    3. TOLERÂNCIA CEGA: Se não declarar Limite de Erro, defina 'limite' como 0.0.
+    TEXTO:
     """ + texto_bruto
 
     max_tentativas = 3
@@ -66,10 +65,12 @@ def processar_ia_estruturada(texto_bruto):
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_schema=RelatorioMetrologico,
-                    temperature=0.0 # Máxima precisão
+                    temperature=0.0
                 )
             )
             
-            # Sanitização extra para garantir que não haja sujeira no JSON retornado
             texto_limpo = resposta.text.strip()
-            if texto_limpo.startswith()
+            if texto_limpo.startswith("
+http://googleusercontent.com/immersive_entry_chip/0
+http://googleusercontent.com/immersive_entry_chip/1
+http://googleusercontent.com/immersive_entry_chip/2
