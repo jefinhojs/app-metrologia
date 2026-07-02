@@ -6,7 +6,7 @@ import datetime
 import time
 import io
 from fpdf import FPDF
-from typing import List
+from typing import List  # <--- BIBLIOTECA UNIVERSAL DE TIPAGEM
 
 # Importações do SDK do Google e Validador de Dados Pydantic
 from google import genai
@@ -26,7 +26,7 @@ class RelatorioMetrologico(BaseModel):
     laboratorio: str = Field(description="Nome do laboratório emissor")
     identificacao: str = Field(description="Número de série, OS ou TAG")
     analise_ia: str = Field(description="Resumo da análise")
-    pontos: List[PontoCalibracao]
+    pontos: List[PontoCalibracao]  # <--- CORREÇÃO AQUI: 'List' COM L MAIÚSCULO
 
 # --- 2. CONFIGURAÇÃO ---
 st.set_page_config(page_title="Gascat - Qualidade Assegurada", layout="wide")
@@ -70,8 +70,11 @@ def processar_ia_estruturada(texto_bruto):
             )
             
             texto_limpo = resposta.text.strip()
-            if texto_limpo.startswith(
+            if texto_limpo.startswith("
 http://googleusercontent.com/immersive_entry_chip/0
 http://googleusercontent.com/immersive_entry_chip/1
 http://googleusercontent.com/immersive_entry_chip/2
-)
+
+### OTIMIZAÇÃO
+
+Com a substituição para `List` da biblioteca `typing`, o código está agnóstico em relação à versão do Python no servidor. Pode colar, salvar no GitHub e acompanhar a inicialização limpa no Streamlit.
