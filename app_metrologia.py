@@ -5,28 +5,30 @@ from groq import Groq
 import json
 import datetime
 from fpdf import FPDF
-import re
+import time
 
 # --- 1. CONFIGURAÇÃO SEGURA E INDEPENDENTE ---
 st.set_page_config(page_title="Gascat - Motor Metrológico Universal", layout="wide", page_icon="🔬")
 
+# Captura uma lista de chaves (Fallback Router)
 try:
-    cliente_groq = Groq(api_key=st.secrets["GROQ_API_KEY"])
+    # Tenta pegar a lista de chaves; se não existir, cria uma lista com a chave única antiga
+    CHAVES_API = st.secrets.get("GROQ_API_KEYS", [st.secrets.get("GROQ_API_KEY")])
+    if not CHAVES_API or None in CHAVES_API:
+        raise KeyError
 except KeyError:
-    st.error("Erro Crítico: Chave da Groq não encontrada. Verifique o arquivo `.streamlit/secrets.toml` com a variável `GROQ_API_KEY`.")
+    st.error("Erro Crítico: Configure o arquivo `.streamlit/secrets.toml` com a variável `GROQ_API_KEYS = ['chave1', 'chave2']`.")
     st.stop()
 
 # --- 2. FUNÇÕES DE SUPORTE ---
 def sanitizar_texto(texto):
-    """Remove acentos para evitar crash no gerador de PDF (fpdf2 limitação com UTF-8 nativo)."""
-    texto = texto.replace("°", " deg ").replace("µ", "u").replace("±", "+/-")
+    texto = str(texto).replace("°", " deg ").replace("µ", "u").replace("±", "+/-")
     mapa = {'á':'a','à':'a','ã':'a','â':'a','é':'e','ê':'e','í':'i','ó':'o','õ':'o','ô':'o','ú':'u','ç':'c','Á':'A','É':'E','Í':'I','Ó':'O','Ú':'U','Ç':'C'}
     for orig, sub in mapa.items():
         texto = texto.replace(orig, sub)
     return texto
 
 def extrair_texto_pdf(arquivo_pdf):
-    """Extrai texto e, se falhar, tenta extrair tabelas diretamente."""
     texto_final = ""
     with pdfplumber.open(arquivo_pdf) as pdf:
         for page in pdf.pages:
@@ -34,24 +36,21 @@ def extrair_texto_pdf(arquivo_pdf):
             if texto:
                 texto_final += texto + "\n"
             else:
-                # Fallback para PDFs onde o texto é um desenho (comum em tabelas mal formatadas)
                 tabelas = page.extract_tables()
                 for tabela in tabelas:
                     for linha in tabela:
                         texto_final += " | ".join([str(celula) if celula else "" for celula in linha]) + "\n"
     return texto_final
 
-# --- 3. INTELIGÊNCIA ARTIFICIAL RADICAL (LLAMA 3.1 VIA GROQ) ---
-def estruturar_dados_com_ia(texto_bruto):
+# --- 3. INTELIGÊNCIA ARTIFICIAL (COM ROTEAMENTO DE FALLBACK) ---
+def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     prompt = f"""
     Você é um sistema automatizado de extração de dados metrológicos. NÃO CONVERSE. Retorne APENAS o JSON.
     
     REGRAS RÍGIDAS:
-    1. Ignore textos legais, cabeçalhos, rodapés e assinaturas.
-    2. Se o texto estiver embaralhado (ex: certificados de rosca Metrus), use raciocínio espacial para juntar "Nominal" com "Média das Medições".
-    3. TOLERÂNCIA: Se o limite for percentual (ex: "4% da capacidade final", "2% do ponto"), CALCULE o valor absoluto para cada linha e coloque no JSON.
-    4. UNIDADES: Converta tudo para a unidade base (ex: µm vira mm dividindo por 1000).
-    5. ROSCAS: Separe em grandezas diferentes ("Diametro", "Passo", "Semi Angulo").
+    1. Ignore textos legais, cabeçalhos e assinaturas.
+    2. TOLERÂNCIA: Se o usuário definiu uma tolerância global ({criterio_usuario}), aplique-a no campo "limite" de TODOS os pontos. Caso seja 0.0, extraia o limite do texto.
+    3. UNIDADES: Converta tudo para a unidade base.
     
     RETORNE ESTE FORMATO EXATO:
     {{
@@ -59,45 +58,52 @@ def estruturar_dados_com_ia(texto_bruto):
         "instrumento": "Nome",
         "laboratorio": "Lab",
         "identificacao": "N Certificado",
-        "analise_ia": "Resumo de 2 linhas sobre conversões ou cálculos de limite feitos."
+        "analise_ia": "Resumo rápido."
       }},
       "grandezas": [
         {{
           "nome_grandeza": "Pressao",
           "unidade": "bar",
           "pontos": [
-            {{
-              "vrm": 0.0, 
-              "vim": 0.0, 
-              "erro": 0.0, 
-              "incerteza": 0.0, 
-              "limite": 0.0
-            }}
+            {{"vrm": 0.0, "vim": 0.0, "erro": 0.0, "incerteza": 0.0, "limite": {criterio_usuario if criterio_usuario > 0 else 0.0}}}
           ]
         }}
       ]
     }}
     
-    TEXTO DO CERTIFICADO:
+    TEXTO:
     {texto_bruto}
     """
 
-    try:
-        # Chamada para a Groq com o modelo Llama 3.3 atualizado
-        resposta = cliente_groq.chat.completions.create(
-            model="llama-3.3-70b-versatile", 
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"}, 
-            temperature=0.0, 
-            max_tokens=4096
-        )
-        return json.loads(resposta.choices[0].message.content)
-    except Exception as e:
-        st.error(f"Erro de comunicação com a IA: {str(e)}")
-        return None
+    ultimo_erro = None
+    # Motor de Fallback (Rotaciona as chaves se os tokens acabarem)
+    for index, chave in enumerate(CHAVES_API):
+        try:
+            cliente_groq = Groq(api_key=chave)
+            resposta = cliente_groq.chat.completions.create(
+                model="llama-3.3-70b-versatile", 
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"}, 
+                temperature=0.0, 
+                max_tokens=4096
+            )
+            return json.loads(resposta.choices[0].message.content)
+        
+        except Exception as e:
+            erro_str = str(e).lower()
+            # Se for erro de limite de requisição, tenta a próxima chave
+            if "rate limit" in erro_str or "429" in erro_str or "capacity" in erro_str:
+                ultimo_erro = e
+                continue 
+            else:
+                st.error(f"Erro de processamento da IA: {str(e)}")
+                return None
+                
+    st.error(f"🚨 Falha Crítica: Todas as {len(CHAVES_API)} chaves esgotaram seus limites. Último erro: {ultimo_erro}")
+    return None
         
 # --- 4. MOTOR METROLÓGICO ---
-def avaliar_metrologia(grandesas):
+def avaliar_metrologia(grandesas, criterio_usuario):
     todos_dfs = []
     for grandeza in grandesas:
         pontos = grandeza.get("pontos", [])
@@ -108,7 +114,8 @@ def avaliar_metrologia(grandesas):
                 vim = float(p.get('vim', 0))
                 erro = float(p.get('erro', 0))
                 incerteza = float(p.get('incerteza', 0))
-                limite = float(p.get('limite', 0))
+                # Força o critério do usuário na validação final
+                limite = float(criterio_usuario) if criterio_usuario > 0.0 else float(p.get('limite', 0))
             except ValueError:
                 continue
                 
@@ -116,6 +123,7 @@ def avaliar_metrologia(grandesas):
             impacto_total = erro_abs + incerteza
             porcentagem = (impacto_total / limite) * 100 if limite != 0 else 0
             
+            # Avaliação rigorosa: $$ |Erro| + U \leq Limite $$
             if limite == 0.0: status = "FALTA LIMITE"
             elif impacto_total <= limite: status = "APROVADO"
             elif erro_abs <= limite: status = "RESSALVA"
@@ -140,7 +148,7 @@ def avaliar_metrologia(grandesas):
             
     return pd.concat(todos_dfs, ignore_index=True) if todos_dfs else pd.DataFrame()
 
-# --- 5. GERADOR DE PDF ---
+# --- 5. GERADOR DE PDF (MANTIDO INTACTO) ---
 def gerar_relatorio_pdf(df_resultados, nome_original, resumo_ia):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
@@ -164,7 +172,6 @@ def gerar_relatorio_pdf(df_resultados, nome_original, resumo_ia):
     pdf.multi_cell(0, 4, texto_resumo)
     pdf.ln(3)
     
-    # Tabela segura
     pdf.set_font("helvetica", "", 6)
     colunas = df_resultados.columns.tolist()
     with pdf.table(borders_layout="ALL", text_align="CENTER") as table:
@@ -174,7 +181,6 @@ def gerar_relatorio_pdf(df_resultados, nome_original, resumo_ia):
         for _, row in df_resultados.iterrows():
             linha = table.row()
             for item in row:
-                # Trunca textos longos para não quebrar o layout do PDF
                 valor = str(item)[:25] if len(str(item)) > 25 else str(item)
                 linha.cell(sanitizar_texto(valor))
                 
@@ -203,23 +209,34 @@ def gerar_relatorio_pdf(df_resultados, nome_original, resumo_ia):
 
 # --- 6. INTERFACE STREAMLIT ---
 st.title("🔬 Motor Metrológico Universal - Gascat")
-st.markdown("Powered by **Llama 3.1 (Groq)** | Extração 100% gratuita, local e sem falhas de conexão.")
+st.markdown("Powered by **Llama 3.3 (Groq)** | Extração com Fallback Automático.")
 
+# Nova Área de Configuração Acima do Upload
+st.markdown("### ⚙️ Parâmetros de Calibração")
+criterio_usuario = st.number_input(
+    "Critério de Aceitação (Tolerância do Instrumento):", 
+    min_value=0.0, 
+    value=0.0, 
+    format="%.4f", 
+    help="Se definido maior que 0, este valor substituirá qualquer limite encontrado no certificado. Se deixar 0.0, a IA tentará extrair a tolerância do PDF automaticamente."
+)
+
+st.markdown("---")
 arquivo = st.file_uploader("Insira o Certificado (PDF)", type=["pdf"])
 
 if arquivo:
-    with st.spinner("Processando documento via Llama 3.1..."):
+    with st.spinner("Processando documento... (Testando roteamento de API)"):
         texto = extrair_texto_pdf(arquivo)
         
         if not texto.strip():
-            st.error("Falha: O PDF não contém texto extraível. Pode ser um arquivo formado apenas por imagens.")
+            st.error("Falha: O PDF não contém texto extraível.")
             st.stop()
             
-        # Cortar texto gigante para não estourar limites (Groq aceita até 128k, mas isso economiza processamento)
         if len(texto) > 25000:
             texto = texto[:25000]
             
-        dados_json = estruturar_dados_com_ia(texto)
+        # Passando o critério para a IA
+        dados_json = estruturar_dados_com_ia(texto, criterio_usuario)
         
         if dados_json and "grandezas" in dados_json:
             resumo = dados_json.get("resumo", {})
@@ -231,7 +248,8 @@ if arquivo:
             col_c.metric("Laboratório", sanitizar_texto(resumo.get("laboratorio", "N/A")[:30]))
             st.info(f"**Análise:** {sanitizar_texto(resumo.get('analise_ia', 'Sem observações.'))}")
             
-            df = avaliar_metrologia(dados_json["grandezas"])
+            # Passando o critério para o motor matemático
+            df = avaliar_metrologia(dados_json["grandezas"], criterio_usuario)
             
             if not df.empty:
                 tem_reprovado = "REPROVADO" in df['Decisão'].values
