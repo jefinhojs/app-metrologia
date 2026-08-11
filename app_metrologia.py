@@ -78,6 +78,7 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     ultimo_erro = None
     # Motor de Fallback (Rotaciona as chaves se os tokens acabarem)
     for index, chave in enumerate(CHAVES_API):
+        # Modifique APENAS este bloco dentro da função estruturar_dados_com_ia
         try:
             cliente_groq = Groq(api_key=chave)
             resposta = cliente_groq.chat.completions.create(
@@ -85,7 +86,7 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"}, 
                 temperature=0.0, 
-                max_tokens=4096
+                max_tokens=1000 # <--- MUDANÇA CRÍTICA AQUI (De 4096 para 1000)
             )
             return json.loads(resposta.choices[0].message.content)
         
@@ -232,8 +233,12 @@ if arquivo:
             st.error("Falha: O PDF não contém texto extraível.")
             st.stop()
             
-        if len(texto) > 25000:
-            texto = texto[:25000]
+        # Modifique APENAS esta validação de tamanho antes de chamar a IA
+        if len(texto) > 10000: # <--- Reduzido de 25000 para 10000
+            texto = texto[:10000]
+            
+        # Passando o critério para a IA
+        dados_json = estruturar_dados_com_ia(texto, criterio_usuario)
             
         # Passando o critério para a IA
         dados_json = estruturar_dados_com_ia(texto, criterio_usuario)
