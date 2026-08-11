@@ -70,12 +70,14 @@ def estruturar_dados_com_ia(texto_bruto, limite_informado):
     {texto_bruto}
     """
     try:
+        # 1. Modelo retornado para Llama 3.1
+        # 2. max_tokens reduzido de 4096 para 1500 para evitar bloqueio por reserva de cota (Rate Limit)
         resposta = cliente_groq.chat.completions.create(
-            model="llama-3.3-70b-versatile", 
+            model="llama-3.1-70b-versatile", 
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}, 
             temperature=0.0, 
-            max_tokens=4096
+            max_tokens=1500 
         )
         return json.loads(resposta.choices[0].message.content)
     except Exception as e:
