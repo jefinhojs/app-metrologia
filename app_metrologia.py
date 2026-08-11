@@ -36,28 +36,16 @@ def extrair_texto_pdf(arquivo_pdf):
 # --- 2. INTELIGÊNCIA ARTIFICIAL COM INJEÇÃO DE CONTEXTO ---
 def estruturar_dados_com_ia(texto_bruto, limite_informado):
     prompt = f"""
-    Você é um sistema automatizado de extração e análise de dados metrológicos industriais. NÃO CONVERSE. Retorne APENAS o JSON.
-    
-    INFORMAÇÃO CRÍTICA INJETADA PELO ENGENHEIRO:
-    O Critério de Aceitação Global para este certificado é de {limite_informado} (na unidade base do instrumento).
-    
-    REGRAS RÍGIDAS:
-    1. Ignore textos legais, cabeçalhos, rodapés e assinaturas.
-    2. UNIDADES: Converta tudo para a unidade base (ex: µm vira mm dividindo por 1000).
-    3. LIMITE: Preencha TODOS os campos "limite" no JSON estritamente com o valor {limite_informado}. 
-    4. ANÁLISE IA: No campo 'analise_ia', faça um resumo inteligente afirmando que a avaliação considerou o limite de {limite_informado} fornecido pelo usuário.
-    
-    RETORNE ESTE FORMATO EXATO:
+    NÃO CONVERSE. Retorne APENAS um JSON válido.
+    CRITÉRIO GLOBAL: {limite_informado} (Preencha o campo 'limite' de TODOS os pontos do JSON com este valor).
+    UNIDADES: Converta tudo para mm, bar, etc.
+
+    FORMATO EXATO OBRIGATÓRIO:
     {{
-      "resumo": {{
-        "instrumento": "Nome",
-        "laboratorio": "Lab",
-        "identificacao": "N Certificado",
-        "analise_ia": "Resumo técnico da avaliação considerando o limite injetado."
-      }},
+      "resumo": {{"instrumento": "Nome", "laboratorio": "Lab", "identificacao": "ID", "analise_ia": "Resumo"}},
       "grandezas": [
         {{
-          "nome_grandeza": "Pressao/Diametro/etc",
+          "nome_grandeza": "Pressao ou Diametro",
           "unidade": "mm",
           "pontos": [
             {{"vrm": 0.0, "vim": 0.0, "erro": 0.0, "incerteza": 0.0, "limite": {limite_informado}}}
@@ -70,18 +58,23 @@ def estruturar_dados_com_ia(texto_bruto, limite_informado):
     {texto_bruto}
     """
     try:
-        # 1. Utilização da versão "Instant" de 8B (Produção Estável) - Equilíbrio máximo entre consumo e lógica.
-        # 2. max_tokens em 2000: Janela de segurança otimizada para fechamento do JSON de certificados completos.
+        # Retorno ao motor superior, sustentável agora devido ao corte de texto na entrada
         resposta = cliente_groq.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="llama-3.3-70b-versatile", 
             messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.0,
-            max_tokens=4000
+            response_format={"type": "json_object"}, 
+            temperature=0.0, 
+            max_tokens=2000
         )
-        return json.loads(resposta.choices[0].message.content)
+        conteudo = resposta.choices[0].message.content
+        
+        # Filtro de segurança: Remove formatações Markdown que causam crash no Python
+        if conteudo.startswith("```json"):
+            conteudo = conteudo.replace("```json", "").replace("```", "").strip()
+            
+        return json.loads(conteudo)
     except Exception as e:
-        st.error(f"Erro de comunicação com a IA: {str(e)}")
+        st.error(f"Erro na conversão de dados do Motor Cognitivo: {str(e)}")
         return None
         
 # --- 3. MOTOR METROLÓGICO (AUDITORIA DETERMINÍSTICA) ---
@@ -195,8 +188,10 @@ if arquivo:
             st.error("Falha: PDF sem texto extraível.")
             st.stop()
             
-        # PASSANDO O LIMITE PARA DENTRO DA IA AQUI
-        dados_json = estruturar_dados_com_ia(texto[:25000], limite_usuario)
+     
+        # OTIMIZAÇÃO: Lemos apenas os primeiros 6000 caracteres (suficiente para as tabelas).
+        # Isso destrava as cotas de uso da Groq.
+        dados_json = estruturar_dados_com_ia(texto[:6000], limite_usuario)
         
         if dados_json and "grandezas" in dados_json:
             resumo = dados_json.get("resumo", {})
