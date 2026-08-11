@@ -70,14 +70,14 @@ def estruturar_dados_com_ia(texto_bruto, limite_informado):
     {texto_bruto}
     """
     try:
-        # 1. Transição para o modelo de Visão leve (11B) da geração 3.2
-        # 2. max_tokens calibrado em 2500: zona de segurança geométrica para estruturação JSON sem truncamento
+        # 1. Utilização da versão "Instant" de 8B (Produção Estável) - Equilíbrio máximo entre consumo e lógica.
+        # 2. max_tokens em 2000: Janela de segurança otimizada para fechamento do JSON de certificados completos.
         resposta = cliente_groq.chat.completions.create(
-            model="llama-3.2-11b-vision-preview", 
+            model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"}, 
-            temperature=0.0, 
-            max_tokens=2500 
+            response_format={"type": "json_object"},
+            temperature=0.0,
+            max_tokens=2000
         )
         return json.loads(resposta.choices[0].message.content)
     except Exception as e:
