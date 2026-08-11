@@ -77,7 +77,7 @@ def estruturar_dados_com_ia(texto_bruto, limite_informado):
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             temperature=0.0,
-            max_tokens=2000
+            max_tokens=4000
         )
         return json.loads(resposta.choices[0].message.content)
     except Exception as e:
