@@ -4,18 +4,14 @@ import pandas as pd
 import json
 import datetime
 import re
+import requests
 from fpdf import FPDF
-# Nova biblioteca oficial do Google
-from google import genai
-from google.genai import types
 
 # --- 1. CONFIGURAÇÃO SEGURA E INDEPENDENTE ---
 st.set_page_config(page_title="Gascat - Motor Metrológico Universal", layout="wide", page_icon="🔬")
 
-try:
-    # Nova inicialização do Client
-    cliente_gemini = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-except KeyError:
+CHAVE_GEMINI = st.secrets.get("GEMINI_API_KEY")
+if not CHAVE_GEMINI:
     st.error("Erro Crítico: Chave do Gemini não encontrada no arquivo `.streamlit/secrets.toml` com a variável `GEMINI_API_KEY`.")
     st.stop()
 
@@ -41,7 +37,7 @@ def extrair_texto_pdf(arquivo_pdf):
                         texto_final += " | ".join([str(celula) if celula else "" for celula in linha]) + "\n"
     return texto_final
 
-# --- 3. MOTOR DE IA (NOVO SDK: GOOGLE-GENAI) ---
+# --- 3. MOTOR DE IA (TÚNEL REST API DIRETO - ZERO BUGS DE SDK) ---
 def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     prompt = f"""
     Você é um sistema automatizado de extração de dados metrológicos. NÃO CONVERSE. Retorne APENAS um JSON válido.
@@ -74,31 +70,51 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     {texto_bruto}
     """
 
-    try:
-        # Nova chamada robusta usando o SDK moderno
-        resposta = cliente_gemini.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.0
-            )
-        )
-        
-        texto_resposta = resposta.text.strip()
-        
-        # Blindagem com Regex mantida por precaução contra Markdown
-        match = re.search(r'\{.*\}', texto_resposta, re.DOTALL)
-        if match:
-            json_final = match.group(0)
-        else:
-            json_final = texto_resposta
+    # Array blindado: Se a API rejeitar um endpoint, pula instantaneamente para o próximo sem falhar na interface.
+    modelos_alvo = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro"]
+    
+    headers = {'Content-Type': 'application/json'}
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "temperature": 0.0
+        }
+    }
 
-        return json.loads(json_final)
-        
-    except Exception as e:
-        st.error(f"🚨 **Falha na execução do Gemini:**\n{str(e)}")
-        return None
+    erros_rastreados = []
+
+    for modelo in modelos_alvo:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={CHAVE_GEMINI}"
+        try:
+            resposta = requests.post(url, headers=headers, json=payload, timeout=40)
+            
+            # 200 = Sucesso absoluto na requisição
+            if resposta.status_code == 200:
+                dados = resposta.json()
+                texto_resposta = dados['candidates'][0]['content']['parts'][0]['text']
+                
+                # Regex de contenção: Arranca o JSON limpo ignorando formatação markdown 
+                texto_limpo = texto_resposta.strip()
+                match = re.search(r'\{.*\}', texto_limpo, re.DOTALL)
+                json_final = match.group(0) if match else texto_limpo
+                
+                return json.loads(json_final)
+                
+            elif resposta.status_code == 404:
+                erros_rastreados.append(f"[{modelo}]: 404 (Bloqueado/Inexistente nesta chave)")
+                continue
+            else:
+                # Captura erros 429 (Rate Limit) ou 400 (Bad Request)
+                erros_rastreados.append(f"[{modelo}]: Falha {resposta.status_code} - {resposta.text[:150]}")
+                continue
+                
+        except Exception as e:
+            erros_rastreados.append(f"[{modelo}]: Erro de Conexão - {str(e)[:150]}")
+            continue
+
+    st.error("🚨 **Falha Crítica no Google API:**\nSua chave não possui acesso aos modelos ou estourou o limite de cota.\n\n**Log Interno:**\n" + "\n".join(erros_rastreados))
+    return None
 
 # --- 4. MOTOR METROLÓGICO ---
 def avaliar_metrologia(grandesas, criterio_usuario):
@@ -205,7 +221,7 @@ def gerar_relatorio_pdf(df_resultados, nome_original, resumo_ia):
 
 # --- 6. INTERFACE STREAMLIT ---
 st.title("🔬 Motor Metrológico Universal - Gascat")
-st.markdown("Powered by **Gemini 1.5 Flash** | Novo SDK de Alta Performance.")
+st.markdown("Powered by **Gemini 1.5 Flash** | Conexão Direta (Anti-Bug).")
 
 st.markdown("### ⚙️ Parâmetros de Calibração")
 criterio_usuario = st.number_input(
@@ -220,7 +236,7 @@ st.markdown("---")
 arquivo = st.file_uploader("Insira o Certificado (PDF)", type=["pdf"])
 
 if arquivo:
-    with st.spinner("Conectando ao modelo através do novo SDK do Google..."):
+    with st.spinner("Estabelecendo conexão direta e extraindo dados..."):
         texto = extrair_texto_pdf(arquivo)
         
         if not texto.strip():
