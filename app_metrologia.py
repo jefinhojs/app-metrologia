@@ -37,7 +37,7 @@ def extrair_texto_pdf(arquivo_pdf):
                         texto_final += " | ".join([str(celula) if celula else "" for celula in linha]) + "\n"
     return texto_final
 
-# --- 3. MOTOR DE IA (TÚNEL REST API DIRETO - ZERO BUGS DE SDK) ---
+# --- 3. MOTOR DE IA (TÚNEL REST API - FROTA 3.5 ATUALIZADA) ---
 def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     prompt = f"""
     Você é um sistema automatizado de extração de dados metrológicos. NÃO CONVERSE. Retorne APENAS um JSON válido.
@@ -70,8 +70,8 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     {texto_bruto}
     """
 
-    # Array blindado: Se a API rejeitar um endpoint, pula instantaneamente para o próximo sem falhar na interface.
-    modelos_alvo = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro"]
+    # Array blindado apontando para os modelos ativos da geração 3.5
+    modelos_alvo = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.5-pro"]
     
     headers = {'Content-Type': 'application/json'}
     payload = {
@@ -85,6 +85,7 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     erros_rastreados = []
 
     for modelo in modelos_alvo:
+        # Mantemos v1beta pois é a rota padrão do AI Studio para os modelos da linha lite/flash
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={CHAVE_GEMINI}"
         try:
             resposta = requests.post(url, headers=headers, json=payload, timeout=40)
@@ -105,7 +106,6 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
                 erros_rastreados.append(f"[{modelo}]: 404 (Bloqueado/Inexistente nesta chave)")
                 continue
             else:
-                # Captura erros 429 (Rate Limit) ou 400 (Bad Request)
                 erros_rastreados.append(f"[{modelo}]: Falha {resposta.status_code} - {resposta.text[:150]}")
                 continue
                 
@@ -221,7 +221,7 @@ def gerar_relatorio_pdf(df_resultados, nome_original, resumo_ia):
 
 # --- 6. INTERFACE STREAMLIT ---
 st.title("🔬 Motor Metrológico Universal - Gascat")
-st.markdown("Powered by **Gemini 1.5 Flash** | Conexão Direta (Anti-Bug).")
+st.markdown("Powered by **Gemini 3.5 Flash Lite** | Conexão Direta (Anti-Bug).")
 
 st.markdown("### ⚙️ Parâmetros de Calibração")
 criterio_usuario = st.number_input(
@@ -236,7 +236,7 @@ st.markdown("---")
 arquivo = st.file_uploader("Insira o Certificado (PDF)", type=["pdf"])
 
 if arquivo:
-    with st.spinner("Estabelecendo conexão direta e extraindo dados..."):
+    with st.spinner("Estabelecendo conexão direta com Gemini 3.5 e extraindo dados..."):
         texto = extrair_texto_pdf(arquivo)
         
         if not texto.strip():
