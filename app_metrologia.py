@@ -7,13 +7,21 @@ import re
 import requests
 from fpdf import FPDF
 
-# --- 1. CONFIGURAÇÃO SEGURA E INDEPENDENTE ---
+# --- 1. CONFIGURAÇÃO SEGURA E MEMÓRIA DE SESSÃO ---
 st.set_page_config(page_title="Gascat - Motor Metrológico Universal", layout="wide", page_icon="🔬")
 
 CHAVE_GEMINI = st.secrets.get("GEMINI_API_KEY")
 if not CHAVE_GEMINI:
     st.error("Erro Crítico: Chave do Gemini não encontrada no arquivo `.streamlit/secrets.toml` com a variável `GEMINI_API_KEY`.")
     st.stop()
+
+# Inicialização do Cache de Memória (Evita recálculos e gasto de tokens)
+if 'laudo_gerado' not in st.session_state:
+    st.session_state.laudo_gerado = False
+    st.session_state.pdf_bytes = None
+    st.session_state.df_resultados = None
+    st.session_state.resumo_ia = None
+    st.session_state.arquivo_atual = None
 
 # --- 2. FUNÇÕES DE SUPORTE ---
 def sanitizar_texto(texto):
@@ -37,7 +45,7 @@ def extrair_texto_pdf(arquivo_pdf):
                         texto_final += " | ".join([str(celula) if celula else "" for celula in linha]) + "\n"
     return texto_final
 
-# --- 3. MOTOR DE IA (TÚNEL REST API - FROTA 3.5 ATUALIZADA) ---
+# --- 3. MOTOR DE IA (TÚNEL REST API - FROTA 3.5 LITE) ---
 def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     prompt = f"""
     Você é um sistema automatizado de extração de dados metrológicos. NÃO CONVERSE. Retorne APENAS um JSON válido.
@@ -70,7 +78,6 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     {texto_bruto}
     """
 
-    # Array blindado apontando para os modelos ativos da geração 3.5
     modelos_alvo = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.5-pro"]
     
     headers = {'Content-Type': 'application/json'}
@@ -85,17 +92,14 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     erros_rastreados = []
 
     for modelo in modelos_alvo:
-        # Mantemos v1beta pois é a rota padrão do AI Studio para os modelos da linha lite/flash
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={CHAVE_GEMINI}"
         try:
             resposta = requests.post(url, headers=headers, json=payload, timeout=40)
             
-            # 200 = Sucesso absoluto na requisição
             if resposta.status_code == 200:
                 dados = resposta.json()
                 texto_resposta = dados['candidates'][0]['content']['parts'][0]['text']
                 
-                # Regex de contenção: Arranca o JSON limpo ignorando formatação markdown 
                 texto_limpo = texto_resposta.strip()
                 match = re.search(r'\{.*\}', texto_limpo, re.DOTALL)
                 json_final = match.group(0) if match else texto_limpo
@@ -221,7 +225,7 @@ def gerar_relatorio_pdf(df_resultados, nome_original, resumo_ia):
 
 # --- 6. INTERFACE STREAMLIT ---
 st.title("🔬 Motor Metrológico Universal - Gascat")
-st.markdown("Powered by **Gemini 3.5 Flash Lite** | Conexão Direta (Anti-Bug).")
+st.markdown("Powered by **Gemini 3.5 Flash Lite** | Máxima Eficiência de Tokens.")
 
 st.markdown("### ⚙️ Parâmetros de Calibração")
 criterio_usuario = st.number_input(
@@ -229,64 +233,83 @@ criterio_usuario = st.number_input(
     min_value=0.0, 
     value=0.0, 
     format="%.4f", 
-    help="Se definido maior que 0, este valor substituirá qualquer limite encontrado no certificado. Se deixar 0.0, a IA tentará extrair a tolerância do PDF automaticamente."
+    help="Se definido maior que 0, este valor substituirá qualquer limite encontrado no certificado."
 )
 
 st.markdown("---")
 arquivo = st.file_uploader("Insira o Certificado (PDF)", type=["pdf"])
 
-if arquivo:
-    with st.spinner("Estabelecendo conexão direta com Gemini 3.5 e extraindo dados..."):
-        texto = extrair_texto_pdf(arquivo)
-        
-        if not texto.strip():
-            st.error("Falha: O PDF não contém texto extraível.")
-            st.stop()
-            
-        if len(texto) > 100000:
-            texto = texto[:100000]
-            
-        dados_json = estruturar_dados_com_ia(texto, criterio_usuario)
-        
-        if dados_json and "grandezas" in dados_json:
-            resumo = dados_json.get("resumo", {})
-            st.markdown("---")
-            st.markdown("### 🧠 Diagnóstico da IA")
-            col_a, col_b, col_c = st.columns(3)
-            col_a.metric("Instrumento", sanitizar_texto(resumo.get("instrumento", "N/A")[:30]))
-            col_b.metric("Identificação", sanitizar_texto(resumo.get("identificacao", "N/A")[:30]))
-            col_c.metric("Laboratório", sanitizar_texto(resumo.get("laboratorio", "N/A")[:30]))
-            st.info(f"**Análise:** {sanitizar_texto(resumo.get('analise_ia', 'Sem observações.'))}")
-            
-            df = avaliar_metrologia(dados_json["grandezas"], criterio_usuario)
-            
-            if not df.empty:
-                tem_reprovado = "REPROVADO" in df['Decisão'].values
-                falta_limite = "FALTA LIMITE" in df['Decisão'].values
-                
-                st.markdown("### 📊 Laudo Metrológico")
-                if tem_reprovado: st.error("🚨 **LAUDO FINAL: REPROVADO**")
-                elif falta_limite: st.warning("⚠️ **LAUDO FINAL: PENDENTE**")
-                else: st.success("✅ **LAUDO FINAL: APROVADO**")
-                
-                def cor_status(val):
-                    if val == "APROVADO": return 'background-color: rgba(144,238,144,0.2); color:#1e7e34; font-weight:bold;'
-                    elif val == "RESSALVA": return 'background-color: rgba(255,255,102,0.3); color:#856404; font-weight:bold;'
-                    elif val == "REPROVADO": return 'background-color: rgba(255,99,71,0.3); color:#bd2130; font-weight:bold;'
-                    elif val == "FALTA LIMITE": return 'background-color: rgba(200,200,200,0.3); color:#444444; font-weight:bold;'
-                    return ''
+# Gatilho de Limpeza: Se o usuário trocar o arquivo, a memória do laudo anterior é apagada
+if arquivo and st.session_state.arquivo_atual != arquivo.name:
+    st.session_state.laudo_gerado = False
+    st.session_state.arquivo_atual = arquivo.name
 
-                st.dataframe(df.style.map(cor_status, subset=['Decisão']), use_container_width=True, hide_index=True)
+if arquivo:
+    # Botão Master: Bloqueia a execução automática
+    if st.button("🚀 Executar Análise Metrológica", type="primary", use_container_width=True):
+        with st.spinner("Conectando ao modelo, analisando cálculos e extraindo dados..."):
+            texto = extrair_texto_pdf(arquivo)
+            
+            if not texto.strip():
+                st.error("Falha: O PDF não contém texto extraível.")
+                st.stop()
                 
-                pdf_bytes = gerar_relatorio_pdf(df, arquivo.name, resumo)
-                nome_exportacao = f"{arquivo.name.rsplit('.', 1)[0]}_LAUDO_GASCAT.pdf"
+            if len(texto) > 100000:
+                texto = texto[:100000]
                 
-                st.download_button(
-                    label="📥 Baixar Laudo Oficial PDF",
-                    data=pdf_bytes,
-                    file_name=nome_exportacao,
-                    mime="application/pdf",
-                    type="primary"
-                )
+            dados_json = estruturar_dados_com_ia(texto, criterio_usuario)
+            
+            if dados_json and "grandezas" in dados_json:
+                resumo = dados_json.get("resumo", {})
+                df = avaliar_metrologia(dados_json["grandezas"], criterio_usuario)
+                
+                if not df.empty:
+                    # Gera o arquivo em background e salva TUDO na memória (Session State)
+                    pdf_bytes = gerar_relatorio_pdf(df, arquivo.name, resumo)
+                    st.session_state.df_resultados = df
+                    st.session_state.resumo_ia = resumo
+                    st.session_state.pdf_bytes = pdf_bytes
+                    st.session_state.laudo_gerado = True
+                else:
+                    st.warning("A IA leu o documento, mas não encontrou tabelas numéricas válidas.")
             else:
-                st.warning("A IA leu o documento, mas não encontrou tabelas numéricas válidas para gerar o laudo.")
+                st.error("Falha Crítica na comunicação com a IA durante a extração de dados.")
+
+    # Renderização Condicional: Só desenha a tela se o processo foi concluído e está na memória
+    if st.session_state.laudo_gerado:
+        st.markdown("---")
+        st.markdown("### 🧠 Diagnóstico da IA")
+        col_a, col_b, col_c = st.columns(3)
+        col_a.metric("Instrumento", sanitizar_texto(st.session_state.resumo_ia.get("instrumento", "N/A")[:30]))
+        col_b.metric("Identificação", sanitizar_texto(st.session_state.resumo_ia.get("identificacao", "N/A")[:30]))
+        col_c.metric("Laboratório", sanitizar_texto(st.session_state.resumo_ia.get("laboratorio", "N/A")[:30]))
+        st.info(f"**Análise:** {sanitizar_texto(st.session_state.resumo_ia.get('analise_ia', 'Sem observações.'))}")
+        
+        df_salvo = st.session_state.df_resultados
+        
+        tem_reprovado = "REPROVADO" in df_salvo['Decisão'].values
+        falta_limite = "FALTA LIMITE" in df_salvo['Decisão'].values
+        
+        st.markdown("### 📊 Laudo Metrológico")
+        if tem_reprovado: st.error("🚨 **LAUDO FINAL: REPROVADO**")
+        elif falta_limite: st.warning("⚠️ **LAUDO FINAL: PENDENTE**")
+        else: st.success("✅ **LAUDO FINAL: APROVADO**")
+        
+        def cor_status(val):
+            if val == "APROVADO": return 'background-color: rgba(144,238,144,0.2); color:#1e7e34; font-weight:bold;'
+            elif val == "RESSALVA": return 'background-color: rgba(255,255,102,0.3); color:#856404; font-weight:bold;'
+            elif val == "REPROVADO": return 'background-color: rgba(255,99,71,0.3); color:#bd2130; font-weight:bold;'
+            elif val == "FALTA LIMITE": return 'background-color: rgba(200,200,200,0.3); color:#444444; font-weight:bold;'
+            return ''
+
+        st.dataframe(df_salvo.style.map(cor_status, subset=['Decisão']), use_container_width=True, hide_index=True)
+        
+        nome_exportacao = f"{st.session_state.arquivo_atual.rsplit('.', 1)[0]}_LAUDO_GASCAT.pdf"
+        
+        st.download_button(
+            label="📥 Baixar Laudo Oficial PDF",
+            data=st.session_state.pdf_bytes,
+            file_name=nome_exportacao,
+            mime="application/pdf",
+            type="primary"
+        )
