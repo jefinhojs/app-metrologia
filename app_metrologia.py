@@ -42,7 +42,7 @@ def extrair_texto_pdf(arquivo_pdf):
                         texto_final += " | ".join([str(celula) if celula else "" for celula in linha]) + "\n"
     return texto_final
 
-# --- 3. INTELIGÊNCIA ARTIFICIAL (ROTEAMENTO E LOG AVANÇADO) ---
+# --- 3. INTELIGÊNCIA ARTIFICIAL (AUTODESCOBERTA E ROTEAMENTO DINÂMICO) ---
 def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     prompt = f"""
     Você é um sistema automatizado de extração de dados metrológicos. NÃO CONVERSE. Retorne APENAS o JSON.
@@ -75,48 +75,65 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     {texto_bruto}
     """
 
-    # Frota atualizada para máximo desempenho e baixo consumo de tokens
-    modelos_fallback = [
-        "llama-3.1-8b-instant",
-        "gemma2-9b-it",
-        "mixtral-8x7b-32768"
-    ]
-    
     erros_acumulados = []
     
     for chave in CHAVES_API:
-        for modelo in modelos_fallback:
-            try:
-                cliente_groq = Groq(api_key=chave)
-                resposta = cliente_groq.chat.completions.create(
-                    model=modelo, 
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"}, 
-                    temperature=0.0, 
-                    max_tokens=1000 
-                )
-                return json.loads(resposta.choices[0].message.content)
+        try:
+            cliente_groq = Groq(api_key=chave)
             
+            # 1. AUTODESCOBERTA: Pergunta à Groq quais modelos esta chave pode acessar hoje
+            try:
+                lista_bruta = cliente_groq.models.list().data
             except Exception as e:
-                erro_str = str(e)
-                # Guarda um registro curto do erro associado ao modelo para o log final
-                erros_acumulados.append(f"[{modelo}]: {erro_str[:120]}...")
+                erros_acumulados.append(f"[Falha de Autenticação na Chave]: {str(e)[:100]}")
+                continue # Pula para a próxima chave se esta estiver banida/inválida
                 
-                termos_falha_api = ["rate limit", "429", "404", "400", "500", "503", "capacity", "decommissioned", "not found", "connection", "invalid_request_error"]
+            # Filtra apenas modelos textuais robustos disponíveis na lista retornada
+            modelos_permitidos = [m.id for m in lista_bruta if any(nome in m.id.lower() for nome in ["llama", "gemma", "mixtral"])]
+            
+            # Ordena dando prioridade aos modelos mais leves e rápidos (8b, 9b, 7b)
+            modelos_permitidos.sort(key=lambda x: "8b" in x or "9b" in x or "7b" in x, reverse=True)
+
+            if not modelos_permitidos:
+                erros_acumulados.append(f"[Chave {chave[:8]}...]: API conectou, mas a Groq não liberou nenhum modelo de texto para esta conta.")
+                continue
+
+            # 2. EXECUÇÃO: Tenta processar usando os modelos que a própria Groq confirmou que existem
+            for modelo in modelos_permitidos:
+                try:
+                    resposta = cliente_groq.chat.completions.create(
+                        model=modelo, 
+                        messages=[{"role": "user", "content": prompt}],
+                        response_format={"type": "json_object"}, 
+                        temperature=0.0, 
+                        max_tokens=1000 
+                    )
+                    return json.loads(resposta.choices[0].message.content)
                 
-                if any(termo in erro_str.lower() for termo in termos_falha_api):
-                    continue # Causa identificada na Groq, pula para o próximo
-                else:
-                    break # Erro estrutural no Python, quebra o loop
+                except Exception as e:
+                    erro_str = str(e)
+                    erros_acumulados.append(f"[{modelo}]: {erro_str[:100]}...")
                     
-    # Se esgotar tudo, mostra o log do modelo principal para clareza
+                    termos_falha_api = ["rate limit", "429", "500", "503", "capacity", "connection"]
+                    if any(termo in erro_str.lower() for termo in termos_falha_api):
+                        continue # Esgotou cota deste modelo, tenta o próximo da lista dinâmica
+                    else:
+                        break # Erro estrutural, quebra o loop de modelos
+                        
+        except Exception as e:
+            erros_acumulados.append(f"[Erro Sistêmico]: {str(e)[:100]}")
+            continue
+
+    # 3. LOG TRANSPARENTE: Se tudo falhar, exibe exatamente o que a Groq respondeu
+    log_formatado = "\n\n".join([f"- {erro}" for erro in erros_acumulados[:5]])
     mensagem_erro_final = (
-        f"🚨 Falha Crítica: Todos os modelos e chaves esgotaram a cota de uso.\n"
-        f"Principal falha registrada:\n{erros_acumulados[0] if erros_acumulados else 'Erro Desconhecido'}"
+        f"🚨 **Falha Crítica: Operação negada pelos servidores da Groq.**\n\n"
+        f"A sua conta/chave não possui privilégios ativos ou esgotou todas as cotas.\n\n"
+        f"**Rastreio do Sistema:**\n{log_formatado}"
     )
     st.error(mensagem_erro_final)
     return None
-        
+    
 # --- 4. MOTOR METROLÓGICO ---
 def avaliar_metrologia(grandesas, criterio_usuario):
     todos_dfs = []
