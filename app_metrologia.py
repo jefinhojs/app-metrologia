@@ -37,7 +37,7 @@ def extrair_texto_pdf(arquivo_pdf):
                         texto_final += " | ".join([str(celula) if celula else "" for celula in linha]) + "\n"
     return texto_final
 
-# --- 3. INTELIGÊNCIA ARTIFICIAL (AUTODESCOBERTA GEMINI E BLINDAGEM JSON) ---
+# --- 3. INTELIGÊNCIA ARTIFICIAL (GEMINI FLASH - ROTA CANÔNICA) ---
 def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     prompt = f"""
     Você é um sistema automatizado de extração de dados metrológicos. NÃO CONVERSE. Retorne APENAS um JSON válido.
@@ -70,20 +70,13 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     {texto_bruto}
     """
 
-    nome_modelo_exato = "gemini-1.5-flash-latest" # Valor padrão de segurança
+    # Rota primária e universal do Gemini (Sem autodescoberta, sem falhas de alias)
+    nome_modelo_exato = "gemini-1.5-flash" 
     
     try:
-        # 1. Autodescoberta: Interroga a API para capturar o modelo real disponível
-        modelos_disponiveis = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        modelo_encontrado = next((m for m in modelos_disponiveis if '1.5-flash' in m), None)
-        
-        if modelo_encontrado:
-            # A API retorna 'models/nome-do-modelo', precisamos limpar o prefixo
-            nome_modelo_exato = modelo_encontrado.replace('models/', '')
-
-        # 2. Execução com Dupla Camada de Redundância
+        # 1. Execução com Dupla Camada de Redundância JSON
         try:
-            # Tentativa A: Padrão moderno (força saída em JSON nativo)
+            # Tentativa A: Padrão moderno (força saída em JSON nativo na API)
             modelo = genai.GenerativeModel(
                 model_name=nome_modelo_exato,
                 generation_config={"response_mime_type": "application/json"}
@@ -92,12 +85,12 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
             texto_resposta = resposta.text
             
         except TypeError:
-            # Tentativa B: Fallback se a biblioteca do servidor estiver desatualizada
+            # Tentativa B: Fallback se a biblioteca 'google-generativeai' no seu PC/Servidor for antiga
             modelo = genai.GenerativeModel(model_name=nome_modelo_exato)
             resposta = modelo.generate_content(prompt)
             texto_resposta = resposta.text
 
-        # 3. Higienização Avançada: Limpa sujeiras Markdown que o modelo possa inserir
+        # 2. Higienização Avançada: Purifica o dado devolvido pela IA antes do motor matemático
         texto_resposta = texto_resposta.strip()
         if texto_resposta.startswith("```json"):
             texto_resposta = texto_resposta.removeprefix("```json").removesuffix("```").strip()
@@ -107,7 +100,7 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
         return json.loads(texto_resposta)
         
     except Exception as e:
-        st.error(f"🚨 Falha Crítica. O Motor tentou acionar o modelo '{nome_modelo_exato}'. Erro: {str(e)}")
+        st.error(f"🚨 Falha Crítica de Conexão com o Gemini. Erro detalhado: {str(e)}")
         return None
         
 # --- 4. MOTOR METROLÓGICO ---
