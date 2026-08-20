@@ -1,17 +1,20 @@
 import streamlit as st
 import pdfplumber
 import pandas as pd
-import google.generativeai as genai
 import json
 import datetime
-from fpdf import FPDF
 import re
+from fpdf import FPDF
+# Nova biblioteca oficial do Google
+from google import genai
+from google.genai import types
 
 # --- 1. CONFIGURAÇÃO SEGURA E INDEPENDENTE ---
 st.set_page_config(page_title="Gascat - Motor Metrológico Universal", layout="wide", page_icon="🔬")
 
 try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    # Nova inicialização do Client
+    cliente_gemini = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 except KeyError:
     st.error("Erro Crítico: Chave do Gemini não encontrada no arquivo `.streamlit/secrets.toml` com a variável `GEMINI_API_KEY`.")
     st.stop()
@@ -38,7 +41,7 @@ def extrair_texto_pdf(arquivo_pdf):
                         texto_final += " | ".join([str(celula) if celula else "" for celula in linha]) + "\n"
     return texto_final
 
-# --- 3. MOTOR DE IA (BLINDADO COM ROTEAMENTO GEMINI) ---
+# --- 3. MOTOR DE IA (NOVO SDK: GOOGLE-GENAI) ---
 def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     prompt = f"""
     Você é um sistema automatizado de extração de dados metrológicos. NÃO CONVERSE. Retorne APENAS um JSON válido.
@@ -71,58 +74,31 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     {texto_bruto}
     """
 
-    # Lista completa de codinomes em cascata. Se um falhar, o próximo assume instantaneamente.
-    modelos_gemini = [
-        "gemini-1.5-flash-8b",     # Modelo mais ágil (Ideal para JSON)
-        "gemini-1.5-flash-002",    # Codinome explícito (Google Cloud)
-        "gemini-1.5-flash-001",    # Codinome explícito alternativo
-        "gemini-1.5-flash",        # Alias Padrão
-        "gemini-1.5-pro",          # Fallback de Alta Inteligência
-        "gemini-1.0-pro",          # Fallback de Legado I
-        "gemini-pro"               # Fallback de Legado Universal (À prova de falhas)
-    ]
+    try:
+        # Nova chamada robusta usando o SDK moderno
+        resposta = cliente_gemini.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.0
+            )
+        )
+        
+        texto_resposta = resposta.text.strip()
+        
+        # Blindagem com Regex mantida por precaução contra Markdown
+        match = re.search(r'\{.*\}', texto_resposta, re.DOTALL)
+        if match:
+            json_final = match.group(0)
+        else:
+            json_final = texto_resposta
 
-    erros_rastreados = []
-
-    for nome_modelo in modelos_gemini:
-        try:
-            # 1. Tentativa Primária: JSON Nativo
-            try:
-                modelo = genai.GenerativeModel(
-                    model_name=nome_modelo,
-                    generation_config={"response_mime_type": "application/json", "temperature": 0.0}
-                )
-                resposta = modelo.generate_content(prompt)
-                texto_resposta = resposta.text
-            
-            # 2. Tentativa Secundária: Fallback caso o JSON Nativo seja rejeitado pela API/Biblioteca
-            except Exception:
-                modelo = genai.GenerativeModel(model_name=nome_modelo, generation_config={"temperature": 0.0})
-                resposta = modelo.generate_content(prompt)
-                texto_resposta = resposta.text
-
-            if not texto_resposta:
-                raise ValueError("A IA não gerou retorno de texto.")
-
-            # 3. Purificação do JSON com Regex (Ignora qualquer conversa ou markdown em volta)
-            texto_limpo = texto_resposta.strip()
-            match = re.search(r'\{.*\}', texto_limpo, re.DOTALL)
-            
-            if match:
-                json_final = match.group(0)
-            else:
-                json_final = texto_limpo # Força a análise direta se o Regex não mapear as chaves
-
-            return json.loads(json_final)
-
-        except Exception as e:
-            # Captura silenciosamente o erro 404 e avança para a próxima versão de modelo
-            erros_rastreados.append(f"[{nome_modelo} falhou]: {str(e)[:150]}...")
-            continue
-            
-    # Se TODOS os modelos do Google recusarem, exibe os logs para diagnóstico final
-    st.error(f"🚨 **Falha Crítica na API do Google:** Sua chave não tem permissão para nenhum modelo ou a biblioteca precisa ser atualizada.\n\n**Rastreio:**\n" + "\n".join(erros_rastreados))
-    return None
+        return json.loads(json_final)
+        
+    except Exception as e:
+        st.error(f"🚨 **Falha na execução do Gemini:**\n{str(e)}")
+        return None
 
 # --- 4. MOTOR METROLÓGICO ---
 def avaliar_metrologia(grandesas, criterio_usuario):
@@ -229,7 +205,7 @@ def gerar_relatorio_pdf(df_resultados, nome_original, resumo_ia):
 
 # --- 6. INTERFACE STREAMLIT ---
 st.title("🔬 Motor Metrológico Universal - Gascat")
-st.markdown("Powered by **Gemini (Google AI)** | Roteamento Automático Invulnerável.")
+st.markdown("Powered by **Gemini 1.5 Flash** | Novo SDK de Alta Performance.")
 
 st.markdown("### ⚙️ Parâmetros de Calibração")
 criterio_usuario = st.number_input(
@@ -244,7 +220,7 @@ st.markdown("---")
 arquivo = st.file_uploader("Insira o Certificado (PDF)", type=["pdf"])
 
 if arquivo:
-    with st.spinner("Conectando ao Google Gemini e processando documento..."):
+    with st.spinner("Conectando ao modelo através do novo SDK do Google..."):
         texto = extrair_texto_pdf(arquivo)
         
         if not texto.strip():
