@@ -1,23 +1,18 @@
 import streamlit as st
 import pdfplumber
 import pandas as pd
-from groq import Groq
+import google.generativeai as genai
 import json
 import datetime
 from fpdf import FPDF
-import time
 
 # --- 1. CONFIGURAÇÃO SEGURA E INDEPENDENTE ---
 st.set_page_config(page_title="Gascat - Motor Metrológico Universal", layout="wide", page_icon="🔬")
 
-# Captura uma lista de chaves (Fallback Router)
 try:
-    # Tenta pegar a lista de chaves; se não existir, cria uma lista com a chave única antiga
-    CHAVES_API = st.secrets.get("GROQ_API_KEYS", [st.secrets.get("GROQ_API_KEY")])
-    if not CHAVES_API or None in CHAVES_API:
-        raise KeyError
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 except KeyError:
-    st.error("Erro Crítico: Configure o arquivo `.streamlit/secrets.toml` com a variável `GROQ_API_KEYS = ['chave1', 'chave2']`.")
+    st.error("Erro Crítico: Chave do Gemini não encontrada. Verifique o arquivo `.streamlit/secrets.toml` com a variável `GEMINI_API_KEY`.")
     st.stop()
 
 # --- 2. FUNÇÕES DE SUPORTE ---
@@ -42,10 +37,10 @@ def extrair_texto_pdf(arquivo_pdf):
                         texto_final += " | ".join([str(celula) if celula else "" for celula in linha]) + "\n"
     return texto_final
 
-# --- 3. INTELIGÊNCIA ARTIFICIAL (AUTODESCOBERTA E ROTEAMENTO DINÂMICO) ---
+# --- 3. INTELIGÊNCIA ARTIFICIAL (GEMINI 1.5 FLASH) ---
 def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     prompt = f"""
-    Você é um sistema automatizado de extração de dados metrológicos. NÃO CONVERSE. Retorne APENAS o JSON.
+    Você é um sistema automatizado de extração de dados metrológicos. NÃO CONVERSE. Retorne APENAS um JSON válido.
     
     REGRAS RÍGIDAS:
     1. Ignore textos legais, cabeçalhos e assinaturas.
@@ -71,69 +66,24 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
       ]
     }}
     
-    TEXTO:
+    TEXTO DO CERTIFICADO:
     {texto_bruto}
     """
 
-    erros_acumulados = []
-    
-    for chave in CHAVES_API:
-        try:
-            cliente_groq = Groq(api_key=chave)
-            
-            # 1. AUTODESCOBERTA: Pergunta à Groq quais modelos esta chave pode acessar hoje
-            try:
-                lista_bruta = cliente_groq.models.list().data
-            except Exception as e:
-                erros_acumulados.append(f"[Falha de Autenticação na Chave]: {str(e)[:100]}")
-                continue # Pula para a próxima chave se esta estiver banida/inválida
-                
-            # Filtra apenas modelos textuais robustos disponíveis na lista retornada
-            modelos_permitidos = [m.id for m in lista_bruta if any(nome in m.id.lower() for nome in ["llama", "gemma", "mixtral"])]
-            
-            # Ordena dando prioridade aos modelos mais leves e rápidos (8b, 9b, 7b)
-            modelos_permitidos.sort(key=lambda x: "8b" in x or "9b" in x or "7b" in x, reverse=True)
-
-            if not modelos_permitidos:
-                erros_acumulados.append(f"[Chave {chave[:8]}...]: API conectou, mas a Groq não liberou nenhum modelo de texto para esta conta.")
-                continue
-
-            # 2. EXECUÇÃO: Tenta processar usando os modelos que a própria Groq confirmou que existem
-            for modelo in modelos_permitidos:
-                try:
-                    resposta = cliente_groq.chat.completions.create(
-                        model=modelo, 
-                        messages=[{"role": "user", "content": prompt}],
-                        response_format={"type": "json_object"}, 
-                        temperature=0.0, 
-                        max_tokens=1000 
-                    )
-                    return json.loads(resposta.choices[0].message.content)
-                
-                except Exception as e:
-                    erro_str = str(e)
-                    erros_acumulados.append(f"[{modelo}]: {erro_str[:100]}...")
-                    
-                    termos_falha_api = ["rate limit", "429", "500", "503", "capacity", "connection"]
-                    if any(termo in erro_str.lower() for termo in termos_falha_api):
-                        continue # Esgotou cota deste modelo, tenta o próximo da lista dinâmica
-                    else:
-                        break # Erro estrutural, quebra o loop de modelos
-                        
-        except Exception as e:
-            erros_acumulados.append(f"[Erro Sistêmico]: {str(e)[:100]}")
-            continue
-
-    # 3. LOG TRANSPARENTE: Se tudo falhar, exibe exatamente o que a Groq respondeu
-    log_formatado = "\n\n".join([f"- {erro}" for erro in erros_acumulados[:5]])
-    mensagem_erro_final = (
-        f"🚨 **Falha Crítica: Operação negada pelos servidores da Groq.**\n\n"
-        f"A sua conta/chave não possui privilégios ativos ou esgotou todas as cotas.\n\n"
-        f"**Rastreio do Sistema:**\n{log_formatado}"
-    )
-    st.error(mensagem_erro_final)
-    return None
-    
+    try:
+        # Configuração nativa para forçar saída em JSON
+        modelo = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            generation_config={"response_mime_type": "application/json"}
+        )
+        
+        resposta = modelo.generate_content(prompt)
+        return json.loads(resposta.text)
+        
+    except Exception as e:
+        st.error(f"🚨 Falha no processamento pelo Gemini: {str(e)}")
+        return None
+        
 # --- 4. MOTOR METROLÓGICO ---
 def avaliar_metrologia(grandesas, criterio_usuario):
     todos_dfs = []
@@ -146,7 +96,6 @@ def avaliar_metrologia(grandesas, criterio_usuario):
                 vim = float(p.get('vim', 0))
                 erro = float(p.get('erro', 0))
                 incerteza = float(p.get('incerteza', 0))
-                # Força o critério do usuário na validação final
                 limite = float(criterio_usuario) if criterio_usuario > 0.0 else float(p.get('limite', 0))
             except ValueError:
                 continue
@@ -155,7 +104,6 @@ def avaliar_metrologia(grandesas, criterio_usuario):
             impacto_total = erro_abs + incerteza
             porcentagem = (impacto_total / limite) * 100 if limite != 0 else 0
             
-            # Avaliação rigorosa: $$ |Erro| + U \leq Limite $$
             if limite == 0.0: status = "FALTA LIMITE"
             elif impacto_total <= limite: status = "APROVADO"
             elif erro_abs <= limite: status = "RESSALVA"
@@ -180,7 +128,7 @@ def avaliar_metrologia(grandesas, criterio_usuario):
             
     return pd.concat(todos_dfs, ignore_index=True) if todos_dfs else pd.DataFrame()
 
-# --- 5. GERADOR DE PDF (MANTIDO INTACTO) ---
+# --- 5. GERADOR DE PDF ---
 def gerar_relatorio_pdf(df_resultados, nome_original, resumo_ia):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
@@ -241,9 +189,8 @@ def gerar_relatorio_pdf(df_resultados, nome_original, resumo_ia):
 
 # --- 6. INTERFACE STREAMLIT ---
 st.title("🔬 Motor Metrológico Universal - Gascat")
-st.markdown("Powered by **Llama 3.3 (Groq)** | Extração com Fallback Automático.")
+st.markdown("Powered by **Gemini 1.5 Flash (Google)** | Extração Rápida e Confiável.")
 
-# Nova Área de Configuração Acima do Upload
 st.markdown("### ⚙️ Parâmetros de Calibração")
 criterio_usuario = st.number_input(
     "Critério de Aceitação (Tolerância do Instrumento):", 
@@ -257,21 +204,17 @@ st.markdown("---")
 arquivo = st.file_uploader("Insira o Certificado (PDF)", type=["pdf"])
 
 if arquivo:
-    with st.spinner("Processando documento... (Testando roteamento de API)"):
+    with st.spinner("Processando documento pelo motor Gemini..."):
         texto = extrair_texto_pdf(arquivo)
         
         if not texto.strip():
             st.error("Falha: O PDF não contém texto extraível.")
             st.stop()
             
-        # Modifique APENAS esta validação de tamanho antes de chamar a IA
-        if len(texto) > 10000: # <--- Reduzido de 25000 para 10000
-            texto = texto[:10000]
+        # Limite de texto expandido! Gemini Flash suporta muito mais do que a Groq.
+        if len(texto) > 100000:
+            texto = texto[:100000]
             
-        # Passando o critério para a IA
-        dados_json = estruturar_dados_com_ia(texto, criterio_usuario)
-            
-        # Passando o critério para a IA
         dados_json = estruturar_dados_com_ia(texto, criterio_usuario)
         
         if dados_json and "grandezas" in dados_json:
@@ -284,7 +227,6 @@ if arquivo:
             col_c.metric("Laboratório", sanitizar_texto(resumo.get("laboratorio", "N/A")[:30]))
             st.info(f"**Análise:** {sanitizar_texto(resumo.get('analise_ia', 'Sem observações.'))}")
             
-            # Passando o critério para o motor matemático
             df = avaliar_metrologia(dados_json["grandezas"], criterio_usuario)
             
             if not df.empty:
