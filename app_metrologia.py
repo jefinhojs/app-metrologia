@@ -42,7 +42,7 @@ def extrair_texto_pdf(arquivo_pdf):
                         texto_final += " | ".join([str(celula) if celula else "" for celula in linha]) + "\n"
     return texto_final
 
-# --- 3. INTELIGÊNCIA ARTIFICIAL (COM DUPLA REDUNDÂNCIA: CHAVES E MODELOS) ---
+# --- 3. INTELIGÊNCIA ARTIFICIAL (ROTEAMENTO BLINDADO) ---
 def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     prompt = f"""
     Você é um sistema automatizado de extração de dados metrológicos. NÃO CONVERSE. Retorne APENAS o JSON.
@@ -75,11 +75,15 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     {texto_bruto}
     """
 
-    # Modelos estáveis e liberados no tier gratuito
-    modelos_fallback = ["llama-3.1-70b-versatile", "llama-3.1-8b-instant"]
+    # Modelos atuais, estáveis e não-descontinuados
+    modelos_fallback = [
+        "llama-3.1-8b-instant", 
+        "mixtral-8x7b-32768",
+        "llama3-8b-8192"
+    ]
+    
     ultimo_erro = None
     
-    # Motor de Fallback Duplo: Rotaciona Chaves -> Rotaciona Modelos
     for index_chave, chave in enumerate(CHAVES_API):
         for modelo in modelos_fallback:
             try:
@@ -89,21 +93,24 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
                     messages=[{"role": "user", "content": prompt}],
                     response_format={"type": "json_object"}, 
                     temperature=0.0, 
-                    max_tokens=1000 # Mantido em 1000 para economizar Tokens Diários
+                    max_tokens=1000 
                 )
                 return json.loads(resposta.choices[0].message.content)
             
             except Exception as e:
                 erro_str = str(e).lower()
                 ultimo_erro = e
-                # Se o erro for de cota esgotada (429) ou modelo não encontrado (404), tenta o próximo modelo/chave
-                if "rate limit" in erro_str or "429" in erro_str or "capacity" in erro_str or "404" in erro_str:
-                    continue 
+                
+                # Tratamento Universal: Se o erro vier da requisição ou da Groq, tenta a próxima opção
+                termos_falha_api = ["rate limit", "429", "404", "400", "500", "503", "capacity", "decommissioned", "not found", "connection"]
+                
+                if any(termo in erro_str for termo in termos_falha_api):
+                    continue # Pula para o próximo modelo/chave
                 else:
-                    # Se for um erro crítico de conexão ou formatação, interrompe este loop de modelo
+                    # Só interrompe se for um erro de código que não tem relação com a API
                     break
                 
-    st.error(f"🚨 Falha Crítica: Todas as chaves e modelos de backup falharam. Último erro: {ultimo_erro}")
+    st.error(f"🚨 Falha Crítica de Conexão. O Motor testou todas as alternativas e foi bloqueado. Último erro: {ultimo_erro}")
     return None
         
 # --- 4. MOTOR METROLÓGICO ---
