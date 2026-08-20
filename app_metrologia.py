@@ -5,6 +5,7 @@ import google.generativeai as genai
 import json
 import datetime
 from fpdf import FPDF
+import re
 
 # --- 1. CONFIGURAÇÃO SEGURA E INDEPENDENTE ---
 st.set_page_config(page_title="Gascat - Motor Metrológico Universal", layout="wide", page_icon="🔬")
@@ -12,7 +13,7 @@ st.set_page_config(page_title="Gascat - Motor Metrológico Universal", layout="w
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 except KeyError:
-    st.error("Erro Crítico: Chave do Gemini não encontrada. Verifique o arquivo `.streamlit/secrets.toml` com a variável `GEMINI_API_KEY`.")
+    st.error("Erro Crítico: Chave do Gemini não encontrada no arquivo `.streamlit/secrets.toml` com a variável `GEMINI_API_KEY`.")
     st.stop()
 
 # --- 2. FUNÇÕES DE SUPORTE ---
@@ -37,7 +38,7 @@ def extrair_texto_pdf(arquivo_pdf):
                         texto_final += " | ".join([str(celula) if celula else "" for celula in linha]) + "\n"
     return texto_final
 
-# --- 3. INTELIGÊNCIA ARTIFICIAL (GEMINI FLASH - ROTA CANÔNICA) ---
+# --- 3. MOTOR DE IA (BLINDADO COM ROTEAMENTO GEMINI) ---
 def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     prompt = f"""
     Você é um sistema automatizado de extração de dados metrológicos. NÃO CONVERSE. Retorne APENAS um JSON válido.
@@ -70,39 +71,59 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     {texto_bruto}
     """
 
-    # Rota primária e universal do Gemini (Sem autodescoberta, sem falhas de alias)
-    nome_modelo_exato = "gemini-1.5-flash" 
-    
-    try:
-        # 1. Execução com Dupla Camada de Redundância JSON
+    # Lista completa de codinomes em cascata. Se um falhar, o próximo assume instantaneamente.
+    modelos_gemini = [
+        "gemini-1.5-flash-8b",     # Modelo mais ágil (Ideal para JSON)
+        "gemini-1.5-flash-002",    # Codinome explícito (Google Cloud)
+        "gemini-1.5-flash-001",    # Codinome explícito alternativo
+        "gemini-1.5-flash",        # Alias Padrão
+        "gemini-1.5-pro",          # Fallback de Alta Inteligência
+        "gemini-1.0-pro",          # Fallback de Legado I
+        "gemini-pro"               # Fallback de Legado Universal (À prova de falhas)
+    ]
+
+    erros_rastreados = []
+
+    for nome_modelo in modelos_gemini:
         try:
-            # Tentativa A: Padrão moderno (força saída em JSON nativo na API)
-            modelo = genai.GenerativeModel(
-                model_name=nome_modelo_exato,
-                generation_config={"response_mime_type": "application/json"}
-            )
-            resposta = modelo.generate_content(prompt)
-            texto_resposta = resposta.text
+            # 1. Tentativa Primária: JSON Nativo
+            try:
+                modelo = genai.GenerativeModel(
+                    model_name=nome_modelo,
+                    generation_config={"response_mime_type": "application/json", "temperature": 0.0}
+                )
+                resposta = modelo.generate_content(prompt)
+                texto_resposta = resposta.text
             
-        except TypeError:
-            # Tentativa B: Fallback se a biblioteca 'google-generativeai' no seu PC/Servidor for antiga
-            modelo = genai.GenerativeModel(model_name=nome_modelo_exato)
-            resposta = modelo.generate_content(prompt)
-            texto_resposta = resposta.text
+            # 2. Tentativa Secundária: Fallback caso o JSON Nativo seja rejeitado pela API/Biblioteca
+            except Exception:
+                modelo = genai.GenerativeModel(model_name=nome_modelo, generation_config={"temperature": 0.0})
+                resposta = modelo.generate_content(prompt)
+                texto_resposta = resposta.text
 
-        # 2. Higienização Avançada: Purifica o dado devolvido pela IA antes do motor matemático
-        texto_resposta = texto_resposta.strip()
-        if texto_resposta.startswith("```json"):
-            texto_resposta = texto_resposta.removeprefix("```json").removesuffix("```").strip()
-        elif texto_resposta.startswith("```"):
-            texto_resposta = texto_resposta.removeprefix("```").removesuffix("```").strip()
+            if not texto_resposta:
+                raise ValueError("A IA não gerou retorno de texto.")
 
-        return json.loads(texto_resposta)
-        
-    except Exception as e:
-        st.error(f"🚨 Falha Crítica de Conexão com o Gemini. Erro detalhado: {str(e)}")
-        return None
-        
+            # 3. Purificação do JSON com Regex (Ignora qualquer conversa ou markdown em volta)
+            texto_limpo = texto_resposta.strip()
+            match = re.search(r'\{.*\}', texto_limpo, re.DOTALL)
+            
+            if match:
+                json_final = match.group(0)
+            else:
+                json_final = texto_limpo # Força a análise direta se o Regex não mapear as chaves
+
+            return json.loads(json_final)
+
+        except Exception as e:
+            # Captura silenciosamente o erro 404 e avança para a próxima versão de modelo
+            erros_rastreados.append(f"[{nome_modelo} falhou]: {str(e)[:150]}...")
+            continue
+            
+    # Se TODOS os modelos do Google recusarem, exibe os logs para diagnóstico final
+    st.error(f"🚨 **Falha Crítica na API do Google:** Sua chave não tem permissão para nenhum modelo ou a biblioteca precisa ser atualizada.\n\n**Rastreio:**\n" + "\n".join(erros_rastreados))
+    return None
+
 # --- 4. MOTOR METROLÓGICO ---
 def avaliar_metrologia(grandesas, criterio_usuario):
     todos_dfs = []
@@ -116,7 +137,7 @@ def avaliar_metrologia(grandesas, criterio_usuario):
                 erro = float(p.get('erro', 0))
                 incerteza = float(p.get('incerteza', 0))
                 limite = float(criterio_usuario) if criterio_usuario > 0.0 else float(p.get('limite', 0))
-            except ValueError:
+            except (ValueError, TypeError):
                 continue
                 
             erro_abs = abs(erro)
@@ -208,7 +229,7 @@ def gerar_relatorio_pdf(df_resultados, nome_original, resumo_ia):
 
 # --- 6. INTERFACE STREAMLIT ---
 st.title("🔬 Motor Metrológico Universal - Gascat")
-st.markdown("Powered by **Gemini 1.5 Flash (Google)** | Extração Rápida e Confiável.")
+st.markdown("Powered by **Gemini (Google AI)** | Roteamento Automático Invulnerável.")
 
 st.markdown("### ⚙️ Parâmetros de Calibração")
 criterio_usuario = st.number_input(
@@ -223,14 +244,13 @@ st.markdown("---")
 arquivo = st.file_uploader("Insira o Certificado (PDF)", type=["pdf"])
 
 if arquivo:
-    with st.spinner("Processando documento pelo motor Gemini..."):
+    with st.spinner("Conectando ao Google Gemini e processando documento..."):
         texto = extrair_texto_pdf(arquivo)
         
         if not texto.strip():
             st.error("Falha: O PDF não contém texto extraível.")
             st.stop()
             
-        # Limite de texto expandido! Gemini Flash suporta muito mais do que a Groq.
         if len(texto) > 100000:
             texto = texto[:100000]
             
