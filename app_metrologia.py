@@ -42,7 +42,7 @@ def extrair_texto_pdf(arquivo_pdf):
                         texto_final += " | ".join([str(celula) if celula else "" for celula in linha]) + "\n"
     return texto_final
 
-# --- 3. INTELIGÊNCIA ARTIFICIAL (COM ROTEAMENTO DE FALLBACK) ---
+# --- 3. INTELIGÊNCIA ARTIFICIAL (COM DUPLA REDUNDÂNCIA: CHAVES E MODELOS) ---
 def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     prompt = f"""
     Você é um sistema automatizado de extração de dados metrológicos. NÃO CONVERSE. Retorne APENAS o JSON.
@@ -75,32 +75,35 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     {texto_bruto}
     """
 
+    # Modelos estáveis e liberados no tier gratuito
+    modelos_fallback = ["llama-3.1-70b-versatile", "llama-3.1-8b-instant"]
     ultimo_erro = None
-    # Motor de Fallback (Rotaciona as chaves se os tokens acabarem)
-    for index, chave in enumerate(CHAVES_API):
-        # Modifique APENAS este bloco dentro da função estruturar_dados_com_ia
-        try:
-            cliente_groq = Groq(api_key=chave)
-            resposta = cliente_groq.chat.completions.create(
-                model="llama-3.3-70b-versatile", 
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"}, 
-                temperature=0.0, 
-                max_tokens=1000 # <--- MUDANÇA CRÍTICA AQUI (De 4096 para 1000)
-            )
-            return json.loads(resposta.choices[0].message.content)
-        
-        except Exception as e:
-            erro_str = str(e).lower()
-            # Se for erro de limite de requisição, tenta a próxima chave
-            if "rate limit" in erro_str or "429" in erro_str or "capacity" in erro_str:
+    
+    # Motor de Fallback Duplo: Rotaciona Chaves -> Rotaciona Modelos
+    for index_chave, chave in enumerate(CHAVES_API):
+        for modelo in modelos_fallback:
+            try:
+                cliente_groq = Groq(api_key=chave)
+                resposta = cliente_groq.chat.completions.create(
+                    model=modelo, 
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"}, 
+                    temperature=0.0, 
+                    max_tokens=1000 # Mantido em 1000 para economizar Tokens Diários
+                )
+                return json.loads(resposta.choices[0].message.content)
+            
+            except Exception as e:
+                erro_str = str(e).lower()
                 ultimo_erro = e
-                continue 
-            else:
-                st.error(f"Erro de processamento da IA: {str(e)}")
-                return None
+                # Se o erro for de cota esgotada (429) ou modelo não encontrado (404), tenta o próximo modelo/chave
+                if "rate limit" in erro_str or "429" in erro_str or "capacity" in erro_str or "404" in erro_str:
+                    continue 
+                else:
+                    # Se for um erro crítico de conexão ou formatação, interrompe este loop de modelo
+                    break
                 
-    st.error(f"🚨 Falha Crítica: Todas as {len(CHAVES_API)} chaves esgotaram seus limites. Último erro: {ultimo_erro}")
+    st.error(f"🚨 Falha Crítica: Todas as chaves e modelos de backup falharam. Último erro: {ultimo_erro}")
     return None
         
 # --- 4. MOTOR METROLÓGICO ---
