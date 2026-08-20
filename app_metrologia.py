@@ -42,7 +42,7 @@ def extrair_texto_pdf(arquivo_pdf):
                         texto_final += " | ".join([str(celula) if celula else "" for celula in linha]) + "\n"
     return texto_final
 
-# --- 3. INTELIGÊNCIA ARTIFICIAL (ROTEAMENTO BLINDADO) ---
+# --- 3. INTELIGÊNCIA ARTIFICIAL (ROTEAMENTO E LOG AVANÇADO) ---
 def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     prompt = f"""
     Você é um sistema automatizado de extração de dados metrológicos. NÃO CONVERSE. Retorne APENAS o JSON.
@@ -75,16 +75,16 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     {texto_bruto}
     """
 
-    # Modelos atuais, estáveis e não-descontinuados
+    # Frota atualizada para máximo desempenho e baixo consumo de tokens
     modelos_fallback = [
-        "llama-3.1-8b-instant", 
-        "mixtral-8x7b-32768",
-        "llama3-8b-8192"
+        "llama-3.1-8b-instant",
+        "gemma2-9b-it",
+        "mixtral-8x7b-32768"
     ]
     
-    ultimo_erro = None
+    erros_acumulados = []
     
-    for index_chave, chave in enumerate(CHAVES_API):
+    for chave in CHAVES_API:
         for modelo in modelos_fallback:
             try:
                 cliente_groq = Groq(api_key=chave)
@@ -98,19 +98,23 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
                 return json.loads(resposta.choices[0].message.content)
             
             except Exception as e:
-                erro_str = str(e).lower()
-                ultimo_erro = e
+                erro_str = str(e)
+                # Guarda um registro curto do erro associado ao modelo para o log final
+                erros_acumulados.append(f"[{modelo}]: {erro_str[:120]}...")
                 
-                # Tratamento Universal: Se o erro vier da requisição ou da Groq, tenta a próxima opção
-                termos_falha_api = ["rate limit", "429", "404", "400", "500", "503", "capacity", "decommissioned", "not found", "connection"]
+                termos_falha_api = ["rate limit", "429", "404", "400", "500", "503", "capacity", "decommissioned", "not found", "connection", "invalid_request_error"]
                 
-                if any(termo in erro_str for termo in termos_falha_api):
-                    continue # Pula para o próximo modelo/chave
+                if any(termo in erro_str.lower() for termo in termos_falha_api):
+                    continue # Causa identificada na Groq, pula para o próximo
                 else:
-                    # Só interrompe se for um erro de código que não tem relação com a API
-                    break
-                
-    st.error(f"🚨 Falha Crítica de Conexão. O Motor testou todas as alternativas e foi bloqueado. Último erro: {ultimo_erro}")
+                    break # Erro estrutural no Python, quebra o loop
+                    
+    # Se esgotar tudo, mostra o log do modelo principal para clareza
+    mensagem_erro_final = (
+        f"🚨 Falha Crítica: Todos os modelos e chaves esgotaram a cota de uso.\n"
+        f"Principal falha registrada:\n{erros_acumulados[0] if erros_acumulados else 'Erro Desconhecido'}"
+    )
+    st.error(mensagem_erro_final)
     return None
         
 # --- 4. MOTOR METROLÓGICO ---
