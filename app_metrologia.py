@@ -53,7 +53,11 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
     REGRAS RÍGIDAS:
     1. Ignore textos legais, cabeçalhos e assinaturas.
     2. TOLERÂNCIA: Se o usuário definiu uma tolerância global ({criterio_usuario}), aplique-a no campo "limite" de TODOS os pontos. Caso seja 0.0, extraia o limite do texto.
-    3. UNIDADES: Converta tudo para a unidade base.
+    3. UNIDADES PRINCIPAIS (MANDATÓRIO):
+       - Identifique a grandeza e a unidade nativa de indicação do instrumento avaliado (seja dimensional, pressão, temperatura, massa, etc.).
+       - IGNORE colunas informativas de conversão secundária (ex: ignorar kPa se a indicação principal for kgf/cm²; ignorar polegadas se o instrumento indicar em mm). Extraia os valores de Padrão, Indicação e Erro estritamente na unidade principal.
+    4. MÚLTIPLOS CICLOS E REPETIÇÕES:
+       - Se a tabela do laboratório apresentar medições repetidas para o mesmo ponto nominal (ex: Carrego/Descarrego, Subida/Descida, Ciclo 1/Ciclo 2, Medição 1/2/3), não crie linhas duplicadas. Extraia APENAS o pior cenário (o maior erro em módulo) e sua respectiva incerteza para cada ponto.
     
     RETORNE ESTE FORMATO EXATO:
     {{
@@ -61,12 +65,12 @@ def estruturar_dados_com_ia(texto_bruto, criterio_usuario):
         "instrumento": "Nome",
         "laboratorio": "Lab",
         "identificacao": "N Certificado",
-        "analise_ia": "Resumo rápido."
+        "analise_ia": "Resumo rápido informando a grandeza identificada, a unidade principal rastreada e a estratégia adotada."
       }},
       "grandezas": [
         {{
-          "nome_grandeza": "Pressao",
-          "unidade": "bar",
+          "nome_grandeza": "Nome da Grandeza (ex: Comprimento, Pressao, Temperatura, Forca)",
+          "unidade": "Unidade principal",
           "pontos": [
             {{"vrm": 0.0, "vim": 0.0, "erro": 0.0, "incerteza": 0.0, "limite": {criterio_usuario if criterio_usuario > 0 else 0.0}}}
           ]
